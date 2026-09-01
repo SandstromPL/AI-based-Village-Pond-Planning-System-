@@ -1,0 +1,29 @@
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment Variables
+.env
+.env.local
+.env.example
+
+# Project specific data/output
+backend/data/
+input/
+out.json
+*.kml
+*.kmz
