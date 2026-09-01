@@ -7,6 +7,7 @@ GET  /analysis/{id}   — retrieve a previously computed analysis
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 
@@ -42,6 +43,19 @@ _ALLOWED_EXTENSIONS = {".kml", ".kmz"}
 _MAX_FILE_SIZE_MB = 50
 
 
+class PrettyJSONResponse(JSONResponse):
+    """Return successful analysis results as readable, indented JSON."""
+
+    def render(self, content) -> bytes:
+        return json.dumps(
+            content,
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=2,
+            separators=(",", ": "),
+        ).encode("utf-8")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # POST /analyzeContour
 # ─────────────────────────────────────────────────────────────────────────────
@@ -49,6 +63,7 @@ _MAX_FILE_SIZE_MB = 50
 @router.post(
     "/analyzeContour",
     response_model=AnalysisResponse,
+    response_class=PrettyJSONResponse,
     summary="Analyze a contour map for pond site selection",
     description=(
         "Upload a contour map in KML or KMZ format. "
@@ -122,6 +137,7 @@ async def analyze_contour(
 @router.get(
     "/analysis/{analysis_id}",
     response_model=AnalysisResponse,
+    response_class=PrettyJSONResponse,
     summary="Retrieve a previously computed analysis",
     responses={
         200: {"description": "Analysis found"},
