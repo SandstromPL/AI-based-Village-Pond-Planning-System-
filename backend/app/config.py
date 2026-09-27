@@ -72,7 +72,13 @@ class Settings(BaseSettings):
     elevation_request_timeout_s: float = Field(default=15.0, gt=0, le=60)
     elevation_batch_size: int = Field(default=50, ge=1, le=200)
     elevation_max_retries: int = Field(default=1, ge=0, le=5)
-    elevation_max_concurrent_requests: int = Field(default=5, ge=1, le=20)
+    elevation_max_concurrent_requests: int = Field(default=12, ge=1, le=30)
+    # Hard wall-clock cap on the whole fetch_elevations() call, regardless of
+    # grid size or how many batches are still retrying — bounds worst case
+    # to roughly this plus one in-flight request's timeout, instead of
+    # scaling with (batch count / concurrency) unbounded. Keep comfortably
+    # under the frontend's own request timeout.
+    elevation_total_budget_s: float = Field(default=45.0, gt=0, le=300)
 
     # Fallback provider, tried only for points Open-Elevation could not
     # return (including total failure — e.g. its domain being unreachable

@@ -11,6 +11,16 @@ that fails an entire batch) are retried against OpenTopoData as a second,
 independent provider — different domain, different infrastructure — before
 giving up on those points. This matters in practice: a network that reaches
 one public API can still fail to resolve/reach another.
+
+A hard wall-clock budget (``elevation_total_budget_s``) bounds the whole
+fetch regardless of grid size or how badly both providers are behaving:
+observed in production, a bad network episode made a 44x44 grid (39
+batches) take ~4 minutes to fully retry through both providers — far past
+any reasonable "fast and functional" bar, and past the frontend's own
+timeout, so the browser gave up while the backend kept working pointlessly.
+The deadline is checked before every new attempt (not just once per batch),
+so remaining budget shrinks each retry's timeout too rather than only
+stopping between whole batches.
 """
 
 from __future__ import annotations
@@ -31,13 +41,12 @@ def fetch_elevations(points: List[Tuple[float, float]]) -> List[Optional[float]]
     """Fetch elevations for a list of (latitude, longitude) points.
 
     Returns a list the same length as ``points``; an entry is ``None`` if
-    that point's elevation could not be retrieved after retries.
+    that point's elevation could not be retrieved within the time budget.
 
     Batches are resolved against the point cache first, then any batches
     with cache misses are fetched from the API concurrently (bounded by
-    ``elevation_max_concurrent_requests``) — a selected area can need many
-    sequential round trips otherwise, and the public Open-Elevation API is
-    slow enough that doing them one at a time is not "fast" by any measure.
+    ``elevation_max_concurrent_requests``), with the whole fetch bounded by
+    ``elevation_total_budget_s`` wall-clock time.
     """
     batch_size = settings.elevation_batch_size
     raw_batches = [points[i:i + batch_size] for i in range(0, len(points), batch_size)]
@@ -50,6 +59,8 @@ def fetch_elevations(points: List[Tuple[float, float]]) -> List[Optional[float]]
         rounded_batches.append(rounded)
         cached_batches.append([_point_cache_get(lat, lon) for lat, lon in rounded])
 
+    deadline = time.monotonic() + settings.elevation_total_budget_s
+
     def resolve_batch(batch_index: int) -> None:
         rounded = rounded_batches[batch_index]
         cached = cached_batches[batch_index]
@@ -57,8 +68,17 @@ def fetch_elevations(points: List[Tuple[float, float]]) -> List[Optional[float]]
         if not missing_indices:
             return
 
+        if time.monotonic() > deadline:
+            logger.warning(
+                "Elevation time budget exhausted before batch %d could start; "
+                "%d point(s) left unfetched (will be nearest-neighbour filled).",
+                batch_index,
+                len(missing_indices),
+            )
+            return
+
         missing_points = [rounded[i] for i in missing_indices]
-        fetched = _fetch_batch_from_api(missing_points)
+        fetched = _fetch_batch_from_api(missing_points, deadline)
         for local_i, value in zip(missing_indices, fetched):
             cached[local_i] = value
             lat, lon = rounded[local_i]
@@ -95,20 +115,20 @@ def clear_elevation_cache() -> None:
     _point_cache.clear()
 
 
-def _fetch_batch_from_api(batch: List[Tuple[float, float]]) -> List[Optional[float]]:
+def _fetch_batch_from_api(batch: List[Tuple[float, float]], deadline: float) -> List[Optional[float]]:
     """Fetch a batch from Open-Elevation, falling back to OpenTopoData for
     any points it could not provide (including a total batch failure)."""
-    result = _fetch_from_open_elevation(batch)
+    result = _fetch_from_open_elevation(batch, deadline)
 
     if settings.elevation_fallback_enabled:
         missing_indices = [i for i, v in enumerate(result) if v is None]
-        if missing_indices:
+        if missing_indices and time.monotonic() < deadline:
             logger.warning(
                 "Falling back to OpenTopoData for %d point(s) Open-Elevation could not provide.",
                 len(missing_indices),
             )
             fallback_points = [batch[i] for i in missing_indices]
-            fallback_values = _fetch_from_opentopodata(fallback_points)
+            fallback_values = _fetch_from_opentopodata(fallback_points, deadline)
             for local_i, value in zip(missing_indices, fallback_values):
                 if value is not None:
                     result[local_i] = value
@@ -116,7 +136,7 @@ def _fetch_batch_from_api(batch: List[Tuple[float, float]]) -> List[Optional[flo
     return result
 
 
-def _fetch_from_open_elevation(batch: List[Tuple[float, float]]) -> List[Optional[float]]:
+def _fetch_from_open_elevation(batch: List[Tuple[float, float]], deadline: float) -> List[Optional[float]]:
     payload = {
         "locations": [
             {"latitude": lat, "longitude": lon} for lat, lon in batch
@@ -124,11 +144,15 @@ def _fetch_from_open_elevation(batch: List[Tuple[float, float]]) -> List[Optiona
     }
 
     for attempt in range(settings.elevation_max_retries + 1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logger.warning("Open-Elevation deadline exceeded before attempt %d.", attempt + 1)
+            break
         try:
             response = httpx.post(
                 settings.open_elevation_url,
                 json=payload,
-                timeout=settings.elevation_request_timeout_s,
+                timeout=min(settings.elevation_request_timeout_s, remaining),
             )
             response.raise_for_status()
             data = response.json()
@@ -157,8 +181,8 @@ def _fetch_from_open_elevation(batch: List[Tuple[float, float]]) -> List[Optiona
             logger.warning("Open-Elevation returned unusable data: %s", exc)
             break  # malformed payload will not improve on retry
 
-        if attempt < settings.elevation_max_retries:
-            time.sleep(0.5 * (attempt + 1))
+        if attempt < settings.elevation_max_retries and time.monotonic() < deadline:
+            time.sleep(min(0.5 * (attempt + 1), max(0, deadline - time.monotonic())))
 
     logger.error("Open-Elevation batch of %d points failed after retries.", len(batch))
     return [None] * len(batch)
@@ -176,15 +200,19 @@ def _parse_open_elevation_response(data: dict, expected_count: int) -> List[Opti
     return elevations
 
 
-def _fetch_from_opentopodata(batch: List[Tuple[float, float]]) -> List[Optional[float]]:
+def _fetch_from_opentopodata(batch: List[Tuple[float, float]], deadline: float) -> List[Optional[float]]:
     locations = "|".join(f"{lat},{lon}" for lat, lon in batch)
 
     for attempt in range(settings.elevation_max_retries + 1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logger.warning("OpenTopoData deadline exceeded before attempt %d.", attempt + 1)
+            break
         try:
             response = httpx.get(
                 settings.opentopodata_url,
                 params={"locations": locations},
-                timeout=settings.elevation_request_timeout_s,
+                timeout=min(settings.elevation_request_timeout_s, remaining),
             )
             response.raise_for_status()
             data = response.json()
@@ -213,8 +241,8 @@ def _fetch_from_opentopodata(batch: List[Tuple[float, float]]) -> List[Optional[
             logger.warning("OpenTopoData returned unusable data: %s", exc)
             break
 
-        if attempt < settings.elevation_max_retries:
-            time.sleep(0.5 * (attempt + 1))
+        if attempt < settings.elevation_max_retries and time.monotonic() < deadline:
+            time.sleep(min(0.5 * (attempt + 1), max(0, deadline - time.monotonic())))
 
     logger.error("OpenTopoData fallback for %d point(s) failed after retries.", len(batch))
     return [None] * len(batch)

@@ -71,7 +71,7 @@ export default function App() {
     if (!drawnPolygon) return
     setBusy(true)
     setBusyMessage(
-      'Fetching elevation data and analyzing terrain… this can take up to a minute for a freshly-drawn area.',
+      'Fetching elevation data and analyzing terrain… this can take up to a couple of minutes for a freshly-drawn area, especially the first time.',
     )
     setError(null)
     try {

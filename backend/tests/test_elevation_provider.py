@@ -1,5 +1,6 @@
 """Unit tests for the Open-Elevation provider: batching, retries, fallback."""
 
+import time
 from unittest.mock import Mock, patch
 
 import httpx
@@ -69,6 +70,43 @@ def test_fetch_elevations_falls_back_to_opentopodata_on_total_failure(mock_post,
 
     assert result == [250.0]
     assert mock_get.call_count == 1
+
+
+@patch("app.providers.elevation.open_elevation.httpx.get")
+@patch("app.providers.elevation.open_elevation.httpx.post")
+def test_fetch_elevations_respects_total_time_budget(mock_post, mock_get):
+    """A slow/failing network must not make the whole fetch scale with
+    batch count x retries x providers — the deadline should cut it short."""
+    from app.config import settings
+
+    def slow_fail(*args, **kwargs):
+        time.sleep(0.05)
+        raise httpx.TimeoutException("timed out")
+
+    mock_post.side_effect = slow_fail
+    mock_get.side_effect = slow_fail
+
+    original = {
+        "elevation_total_budget_s": settings.elevation_total_budget_s,
+        "elevation_batch_size": settings.elevation_batch_size,
+        "elevation_max_concurrent_requests": settings.elevation_max_concurrent_requests,
+    }
+    settings.elevation_total_budget_s = 0.2
+    settings.elevation_batch_size = 2
+    settings.elevation_max_concurrent_requests = 1
+    try:
+        points = [(i * 0.01, 0.0) for i in range(20)]  # 10 batches of 2, forced sequential
+        start = time.monotonic()
+        result = fetch_elevations(points)
+        elapsed = time.monotonic() - start
+
+        assert result == [None] * 20
+        # Without the deadline this would take ~10 batches worth of full
+        # retry+fallback chains (several seconds); it must stay well short.
+        assert elapsed < 2.0
+    finally:
+        for key, value in original.items():
+            setattr(settings, key, value)
 
 
 @patch("app.providers.elevation.open_elevation.httpx.post")
