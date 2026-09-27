@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import logging
+import threading
 import time
 from typing import List, Optional, Tuple
 
@@ -365,6 +366,34 @@ def _parse_open_elevation_response(data: dict, expected_count: int) -> List[Opti
     return elevations
 
 
+_opentopodata_lock = threading.Lock()
+_opentopodata_next_allowed_at = 0.0
+
+
+def _throttle_opentopodata(deadline: float) -> bool:
+    """OpenTopoData's public demo server documents a 1 call/second limit,
+    but our fallback chain fetches sub-batches concurrently (up to
+    elevation_max_concurrent_requests at once) and OpenTopoData is the
+    last tier every one of them can reach — easily well over 1 req/s
+    during a bad episode, drawing silent 429s indistinguishable from the
+    DNS/connection failures we already see. Serializes calls across all
+    threads to respect that. Returns False if waiting for a free slot
+    would blow the remaining time budget — the caller should give up on
+    this tier rather than wait pointlessly.
+    """
+    global _opentopodata_next_allowed_at
+    with _opentopodata_lock:
+        now = time.monotonic()
+        wait = _opentopodata_next_allowed_at - now
+        if wait > 0:
+            if now + wait > deadline:
+                return False
+            time.sleep(wait)
+            now = time.monotonic()
+        _opentopodata_next_allowed_at = now + 1.0
+    return True
+
+
 def _fetch_from_opentopodata(batch: List[Tuple[float, float]], deadline: float) -> List[Optional[float]]:
     locations = "|".join(f"{lat},{lon}" for lat, lon in batch)
 
@@ -372,6 +401,12 @@ def _fetch_from_opentopodata(batch: List[Tuple[float, float]], deadline: float) 
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             logger.warning("OpenTopoData deadline exceeded before attempt %d.", attempt + 1)
+            break
+        if not _throttle_opentopodata(deadline):
+            logger.warning(
+                "OpenTopoData rate-limit throttle (1 req/s) would exceed the "
+                "remaining budget; giving up on this tier."
+            )
             break
         try:
             response = httpx.get(

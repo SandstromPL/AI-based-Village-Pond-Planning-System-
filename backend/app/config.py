@@ -17,7 +17,6 @@ class Settings(BaseSettings):
     # ── Server ──────────────────────────────────────────────────────────────
     app_host: str = "0.0.0.0"
     app_port: int = 8000
-    app_debug: bool = True
     app_log_level: str = "info"
 
     # ── Terrain Processing ──────────────────────────────────────────────────
@@ -55,7 +54,6 @@ class Settings(BaseSettings):
     openzenith_max_retries: int = Field(default=1, ge=0, le=5)
 
     # ── Rainfall: Open-Meteo Historical Weather API ─────────────────────────
-    open_meteo_forecast_url: str = "https://api.open-meteo.com/v1/forecast"
     open_meteo_archive_url: str = "https://archive-api.open-meteo.com/v1/archive"
     rainfall_history_start_year: int = Field(default=2015, ge=1900)
     rainfall_history_end_year: int | None = Field(default=None, ge=1900)

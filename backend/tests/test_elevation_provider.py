@@ -17,8 +17,12 @@ from app.providers.elevation.open_elevation import (
 @pytest.fixture(autouse=True)
 def _clear_cache_between_tests():
     clear_elevation_cache()
+    import app.providers.elevation.open_elevation as oe_module
+
+    oe_module._opentopodata_next_allowed_at = 0.0
     yield
     clear_elevation_cache()
+    oe_module._opentopodata_next_allowed_at = 0.0
 
 
 def _openzenith_response(batch, elevations):
@@ -235,6 +239,33 @@ def test_fallback_chain_fetches_sub_batches_concurrently():
         assert elapsed < 1.0
     finally:
         settings.elevation_fallback_batch_size = original_sub_size
+
+
+def test_throttle_opentopodata_serializes_concurrent_calls():
+    """OpenTopoData's public demo server documents a 1 call/second limit.
+    Two calls in quick succession must be serialized to ~1s apart, since
+    our fallback chain fetches sub-batches concurrently and OpenTopoData
+    is the last tier every one of them can reach."""
+    from app.providers.elevation.open_elevation import _throttle_opentopodata
+
+    deadline = time.monotonic() + 10
+    start = time.monotonic()
+    assert _throttle_opentopodata(deadline) is True
+    assert _throttle_opentopodata(deadline) is True
+    elapsed = time.monotonic() - start
+
+    assert elapsed >= 0.9
+
+
+def test_throttle_opentopodata_gives_up_if_wait_would_exceed_deadline():
+    """Waiting for a free rate-limit slot must not itself blow the total
+    elevation time budget — give up on this tier instead."""
+    import app.providers.elevation.open_elevation as oe_module
+
+    oe_module._opentopodata_next_allowed_at = time.monotonic() + 5
+    deadline = time.monotonic() + 0.1
+
+    assert oe_module._throttle_opentopodata(deadline) is False
 
 
 @patch("app.providers.elevation.open_elevation.httpx.post")

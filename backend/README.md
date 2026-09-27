@@ -129,8 +129,10 @@ All parameters are in `.env` (see `.env.example`):
 | Variable | Default | Description |
 |---|---|---|
 | `DEM_RESOLUTION_M` | `30` | DEM grid cell size (metres) |
+| `DEM_BBOX_PADDING_FRAC` | `0.1` | Grid padding beyond the contour/selected-area bounding box on each side (avoids flow-routing edge artifacts). For `/analyzeArea`, a candidate can otherwise land in this padding margin, outside the polygon the user drew — see the next row |
 | `MAX_SLOPE_DEG` | `15` | Hard filter: reject candidates with slope > this |
 | `MIN_CATCHMENT_KM2` | `0.005` | Hard filter: reject if catchment < this |
+| *(no setting — always on for `/analyzeArea`)* | — | Hard filter: reject a candidate (`rejected_outside_selection`) whose point falls outside the polygon the user actually drew, even though it's inside the padded DEM grid. Catchment *boundaries* are left unrestricted — a real drainage basin isn't bounded by an arbitrary polygon. Not applied to contour uploads (no narrower user-drawn shape to restrict to there) |
 | `MAX_CANDIDATES` | `5` | Maximum candidates to return |
 | `FLOW_ACC_PERCENTILE` | `99` | Top percentile for flow-convergence seeds |
 | `MIN_CANDIDATE_DISTANCE_M` | `100` | Minimum separation between candidates |
@@ -158,9 +160,15 @@ All parameters are in `.env` (see `.env.example`):
 | `ELEVATION_MAX_CONCURRENT_REQUESTS` | `12` | Batches fetched in parallel (bounds wall-clock time) |
 | `ELEVATION_TOTAL_BUDGET_S` | `45` | Hard wall-clock cap on the whole elevation fetch — bounds worst case regardless of grid size or how badly the providers are behaving |
 | `OPEN_ELEVATION_URL` | Open-Elevation public API | First fallback — only used for points OpenZenith couldn't provide |
-| `ELEVATION_FALLBACK_ENABLED` / `OPENTOPODATA_URL` | `true` / OpenTopoData public API | Second fallback — only used for points neither OpenZenith nor Open-Elevation could return |
+| `ELEVATION_FALLBACK_ENABLED` / `OPENTOPODATA_URL` | `true` / OpenTopoData public API | Second fallback — only used for points neither OpenZenith nor Open-Elevation could return. Calls to it are serialized to at most 1/second across all concurrent batches (its documented public-server limit), regardless of `ELEVATION_MAX_CONCURRENT_REQUESTS` |
 | `SELECTED_AREA_MAX_KM2` | `25` | Reject polygons larger than this |
 | `SELECTED_AREA_MAX_GRID_POINTS` | `2500` | Auto-coarsen DEM resolution above this many cells |
+
+A point that fails every provider tier is **not** cached — only a real
+elevation value is. A permanent process-lifetime cache of failures was a
+real production bug: once one bad network episode failed a point, every
+later request for that same area was served the cached failure forever,
+even after the network recovered. Now a later request simply retries it.
 
 ### Land-use constraint filter (buildings/roads/rivers/water bodies)
 

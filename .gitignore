@@ -19,7 +19,6 @@ __pycache__/
 # Environment Variables
 .env
 .env.local
-.env.example
 
 # Project specific data/output
 backend/data/
@@ -27,3 +26,5 @@ input/
 out.json
 *.kml
 *.kmz
+
+assignment_info/
