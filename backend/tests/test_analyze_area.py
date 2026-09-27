@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.providers.elevation.open_elevation import clear_elevation_cache
+from app.providers.landuse.overpass import clear_landuse_cache
 from app.services.rainfall_service import clear_rainfall_cache
 
 client = TestClient(app)
@@ -30,9 +31,11 @@ _POLYGON = [
 def _clear_caches():
     clear_elevation_cache()
     clear_rainfall_cache()
+    clear_landuse_cache()
     yield
     clear_elevation_cache()
     clear_rainfall_cache()
+    clear_landuse_cache()
 
 
 def _bowl_elevation_response(url, json=None, timeout=None, **kwargs):
@@ -45,6 +48,20 @@ def _bowl_elevation_response(url, json=None, timeout=None, **kwargs):
     return httpx.Response(
         200, json={"results": results}, request=httpx.Request("POST", url)
     )
+
+
+def _empty_overpass_response(url, data=None, timeout=None, **kwargs):
+    return httpx.Response(200, json={"elements": []}, request=httpx.Request("POST", url))
+
+
+def _combined_post_response(url, json=None, data=None, timeout=None, **kwargs):
+    # httpx.post is a single shared global target — both the elevation
+    # provider and the Overpass land-use provider call it, so one mock
+    # must dispatch on the request shape (elevation sends json=, Overpass
+    # sends form-encoded data=) rather than assuming only one caller.
+    if json is not None and "locations" in json:
+        return _bowl_elevation_response(url, json=json, timeout=timeout, **kwargs)
+    return _empty_overpass_response(url, data=data, timeout=timeout, **kwargs)
 
 
 def _rainfall_response(url, params=None, timeout=None, **kwargs):
@@ -60,7 +77,7 @@ def _rainfall_response(url, params=None, timeout=None, **kwargs):
 @patch("app.services.rainfall_service.httpx.get")
 @patch("app.providers.elevation.open_elevation.httpx.post")
 def test_analyze_area_returns_full_pipeline_output(mock_post, mock_get):
-    mock_post.side_effect = _bowl_elevation_response
+    mock_post.side_effect = _combined_post_response
     mock_get.side_effect = _rainfall_response
 
     resp = client.post("/api/v1/analyzeArea", json={"polygon": _POLYGON})

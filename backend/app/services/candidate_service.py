@@ -25,13 +25,16 @@ from typing import List, Tuple
 
 import numpy as np
 from pyproj import Transformer
+from shapely.geometry import Point
 
 from app.algorithms.scoring import score_and_rank_candidates
 from app.config import settings
 from app.models.candidate import CandidateStatus, PondCandidate
 from app.models.catchment import FlowData
+from app.models.contour import BoundingBox
 from app.models.terrain import TerrainModel
 from app.services.catchment_service import get_catchment
+from app.services.landuse_service import build_exclusion_union
 from app.utils.geo import haversine_m
 
 logger = logging.getLogger(__name__)
@@ -40,18 +43,26 @@ logger = logging.getLogger(__name__)
 def generate_candidates(
     terrain: TerrainModel,
     flow_data: FlowData,
-) -> List[PondCandidate]:
+    bbox: BoundingBox,
+) -> Tuple[List[PondCandidate], List[str]]:
     """
     Generate and evaluate all pond candidates.
 
     Args:
         terrain:   TerrainModel with dem, filled_dem, slope.
         flow_data: FlowData with flow_direction and flow_accumulation.
+        bbox:      WGS84 bounding box of the analysis area, used to fetch
+                   land-use exclusion geometries (buildings/roads/rivers).
 
     Returns:
-        List of PondCandidate objects (accepted + rejected), scored and ranked.
+        (candidates, warnings) — candidates scored and ranked; warnings
+        covers non-fatal issues like the land-use filter being unavailable.
     """
     cfg = settings
+
+    # build_exclusion_union already no-ops (returns None, []) when the
+    # filter is disabled in settings or Overpass can't be reached.
+    exclusion_union, constraint_warnings = build_exclusion_union(bbox, terrain.projected_crs)
 
     # ── 1. Depression seeds ───────────────────────────────────────────────
     depression_seeds = _find_depression_seeds(terrain)
@@ -122,6 +133,17 @@ def generate_candidates(
             cid += 1
             continue
 
+        # ── Hard filter: land-use constraint (buildings/roads/rivers) ─────
+        if exclusion_union is not None and Point(x, y).intersects(exclusion_union):
+            candidate.status = CandidateStatus.REJECTED_CONSTRAINT
+            candidate.rejection_reason = (
+                "Location falls within a buffered building, road, waterway, "
+                "or power line (OpenStreetMap)"
+            )
+            candidates.append(candidate)
+            cid += 1
+            continue
+
         # ── Delineate catchment ───────────────────────────────────────────
         try:
             catchment = get_catchment(r, c, terrain, flow_data)
@@ -179,7 +201,7 @@ def generate_candidates(
         len(final) - accepted_count,
     )
 
-    return final
+    return final, constraint_warnings
 
 
 # ── Seed finders ──────────────────────────────────────────────────────────────

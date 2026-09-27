@@ -97,7 +97,7 @@ DEM via contour interpolation        DEM via Open-Elevation grid fetch
            ├── Depression seeds (genuine terrain bowls)
            └── Flow convergence seeds (high accumulation points)
                          ↓
-        Hard Filters (slope, catchment size)
+        Hard Filters (slope, catchment size, land-use constraint)
                          ↓
         Catchment Delineation (upstream BFS per candidate)
                          ↓
@@ -158,6 +158,15 @@ All parameters are in `.env` (see `.env.example`):
 | `SELECTED_AREA_MAX_KM2` | `25` | Reject polygons larger than this |
 | `SELECTED_AREA_MAX_GRID_POINTS` | `2500` | Auto-coarsen DEM resolution above this many cells |
 
+### Land-use constraint filter (buildings/roads/rivers/water bodies)
+
+| Variable | Default | Description |
+|---|---|---|
+| `LANDUSE_CONSTRAINT_ENABLED` | `true` | Reject candidates that fall on/near an existing building, road, waterway, water body, or power line |
+| `OVERPASS_URL` | a public Overpass mirror | OSM data source for exclusion geometries |
+| `OVERPASS_REQUEST_TIMEOUT_S` / `OVERPASS_MAX_RETRIES` | `20` / `1` | Bounded like every other external call — failure skips the filter (plus a warning), never blocks the analysis |
+| `LANDUSE_BUILDING_BUFFER_M` / `_ROAD_` / `_RIVER_` / `_POWERLINE_` | `100` / `50` / `30` / `75` | Buffer distance (metres) around each feature type |
+
 ---
 
 ## External APIs
@@ -167,6 +176,7 @@ All parameters are in `.env` (see `.env.example`):
 | Open-Meteo | Historical rainfall | **Implemented** (`app/services/rainfall_service.py`) |
 | Open-Elevation | Elevation for selected-area analysis | **Implemented** (`app/providers/elevation/open_elevation.py`) |
 | OpenTopoData | Elevation fallback (points Open-Elevation couldn't return) | **Implemented** (same file) |
+| Overpass (OpenStreetMap) | Buildings/roads/rivers/water bodies for the land-use constraint filter | **Implemented** (`app/providers/landuse/overpass.py`) |
 | OpenZenith | Elevation validation (contour path) | Not yet implemented |
 | NASA POWER / IMD | Rainfall alternatives | Not yet implemented |
 
@@ -216,3 +226,4 @@ backend/
 | Scoring | `algorithms/scoring.py` | Min-max normalised weighted sum |
 | Runoff | `services/runoff_service.py` | Rational Method: `Q = C × P × A` |
 | Pond Sizing | `services/pond_service.py` | `storage = runoff × retention factor` |
+| Land-use Constraint | `services/landuse_service.py` | Buffered OSM geometries, unioned; candidate point intersection test |

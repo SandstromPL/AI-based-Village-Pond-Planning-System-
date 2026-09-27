@@ -122,7 +122,8 @@ def _run_from_terrain(
     flow_data = compute_flow_data(terrain)
 
     logger.info("[analysis %s] Generating and evaluating pond candidates...", analysis_id)
-    candidates = generate_candidates(terrain, flow_data)
+    candidates, constraint_warnings = generate_candidates(terrain, flow_data, input_metadata.bbox)
+    warnings.extend(constraint_warnings)
 
     accepted = [c for c in candidates if c.status == CandidateStatus.ACCEPTED]
     rejected = [c for c in candidates if c.status != CandidateStatus.ACCEPTED]

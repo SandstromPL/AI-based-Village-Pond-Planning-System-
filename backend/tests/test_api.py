@@ -3,6 +3,9 @@ Integration test for the full analysis API.
 Run with: pytest tests/test_api.py -v
 """
 import os
+from unittest.mock import patch
+
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
@@ -10,6 +13,18 @@ from app.main import app
 client = TestClient(app)
 
 SAMPLE_KML = os.path.join(os.path.dirname(__file__), "..", "data", "contours_1m.kml")
+
+
+@pytest.fixture(autouse=True)
+def _mock_overpass():
+    """The KML-upload pipeline never calls elevation, so httpx.post here is
+    only ever the new Overpass land-use query — safe to mock unconditionally
+    as "no exclusions found" rather than depend on a real network call."""
+    def _empty_response(url, data=None, timeout=None, **kwargs):
+        return httpx.Response(200, json={"elements": []}, request=httpx.Request("POST", url))
+
+    with patch("app.providers.landuse.overpass.httpx.post", side_effect=_empty_response):
+        yield
 
 
 def _get_sample_bytes():

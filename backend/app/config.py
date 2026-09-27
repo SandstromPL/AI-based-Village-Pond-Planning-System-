@@ -86,6 +86,26 @@ class Settings(BaseSettings):
     elevation_fallback_enabled: bool = True
     opentopodata_url: str = "https://api.opentopodata.org/v1/srtm90m"
 
+    # ── Land-use constraint filter (buildings/roads/rivers/water bodies) ────
+    # Keeps pond candidates off existing structures/water features. Failure
+    # to reach Overpass just skips this filter for the analysis (plus a
+    # warning) rather than blocking the core pipeline — same philosophy as
+    # rainfall/elevation above.
+    landuse_constraint_enabled: bool = True
+    # The flagship overpass-api.de instance returned HTTP 406 (Apache/WAF-level
+    # bot filtering, not an application error) from this development
+    # environment's network — verified live, both GET and POST, with a
+    # browser-like User-Agent. This mirror was verified to work instead;
+    # override via .env if your deployment network reaches the flagship fine.
+    overpass_url: str = "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
+    overpass_request_timeout_s: float = Field(default=20.0, gt=0, le=60)
+    overpass_max_retries: int = Field(default=1, ge=0, le=3)
+    # Buffer distances (metres) — from the original spatial-constraint design.
+    landuse_building_buffer_m: float = Field(default=100.0, ge=0)
+    landuse_road_buffer_m: float = Field(default=50.0, ge=0)
+    landuse_river_buffer_m: float = Field(default=30.0, ge=0)
+    landuse_powerline_buffer_m: float = Field(default=75.0, ge=0)
+
     # ── Map-selected-area analysis limits ────────────────────────────────────
     # Bounds compute/API cost for a user-drawn polygon rather than a KML upload.
     selected_area_max_km2: float = Field(default=25.0, gt=0)

@@ -219,7 +219,7 @@ export default function MapView({ theme, result, mode, onAreaDrawn, onAreaCleare
                     `Score: ${safeNumber(p.score, 1)}`,
                     `Catchment: ${safeNumber(p.catchment_area_km2, 4)} km²`,
                   ]
-                  if (p.rejection_reason) lines.push(`Reason: ${prettify(p.rejection_reason)}`)
+                  if (p.rejection_reason) lines.push(`Reason: ${p.rejection_reason}`)
                   if (p.expected_annual_collection_m3 != null) {
                     lines.push(`Expected volume: ${safeNumber(p.expected_annual_collection_m3, 0)} m³`)
                   }

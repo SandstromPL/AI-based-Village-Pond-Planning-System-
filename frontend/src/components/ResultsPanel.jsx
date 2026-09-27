@@ -169,7 +169,7 @@ export default function ResultsPanel({ result }) {
                   <td>{prettify(c.status)}</td>
                   <td>{safeNumber(c.score, 1)}</td>
                   <td>{safeNumber(c.catchment_area_km2, 4)}</td>
-                  <td>{c.rejection_reason ? prettify(c.rejection_reason) : '—'}</td>
+                  <td>{c.rejection_reason || '—'}</td>
                 </tr>
               ))}
             </tbody>
