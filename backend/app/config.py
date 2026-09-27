@@ -44,17 +44,8 @@ class Settings(BaseSettings):
     openzenith_api_key: str = "PLACEHOLDER"
     openzenith_base_url: str = "https://api.openzenith.example/v1"
 
-    # ── Open-Meteo rainfall ────────────────────────────────────────────────
-    # Short-term rainfall forecast (up to 16 days). This is supplementary
-    # information and is not used to size a pond.
-    open_meteo_forecast_url: str = "https://api.open-meteo.com/v1/forecast"
-
-    # Historical rainfall for annual/monsoon water-volume estimation.
-    open_meteo_archive_url: str = "https://archive-api.open-meteo.com/v1/archive"
-    rainfall_history_start_year: int = Field(default=2015, ge=1900)
-    # None means the most recently completed calendar year.
-    rainfall_history_end_year: int | None = Field(default=None, ge=1900)
-    rainfall_request_timeout_s: float = Field(default=10.0, gt=0, le=60)
+    # [EXTERNAL_API_PLACEHOLDER: Open-Meteo]
+    open_meteo_base_url: str = "https://archive-api.open-meteo.com/v1"
 
     # [EXTERNAL_API_PLACEHOLDER: NASA POWER]
     nasa_power_base_url: str = "https://power.larc.nasa.gov/api/temporal/daily/point"
