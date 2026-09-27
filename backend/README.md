@@ -70,8 +70,9 @@ curl -X POST http://localhost:8000/api/v1/analyzeArea \
 `polygon` is a ring of `[longitude, latitude]` pairs (GeoJSON order), at least
 3 points — typically a rectangle drawn on the frontend map. There's no KML
 file in this path: elevation for a grid sampled over the polygon's bounding
-box is fetched live from Open-Elevation, then fed into the same terrain
-pipeline as the contour-upload flow.
+box is fetched live from OpenZenith (falling back to Open-Elevation, then
+OpenTopoData, for any points it couldn't provide), then fed into the same
+terrain pipeline as the contour-upload flow.
 
 ---
 
@@ -82,7 +83,7 @@ KML/KMZ Upload                          Map-drawn Polygon
     ↓                                        ↓
 File Validation & Parsing            Bounding box + size/grid-point caps
     ↓                                        ↓
-DEM via contour interpolation        DEM via Open-Elevation grid fetch
+DEM via contour interpolation        DEM via OpenZenith grid fetch
     │                                        │ (cached, retried, nearest-
     │                                        │  neighbour fallback on gaps)
     └───────────────────┬────────────────────┘
@@ -149,12 +150,15 @@ All parameters are in `.env` (see `.env.example`):
 
 | Variable | Default | Description |
 |---|---|---|
-| `OPEN_ELEVATION_URL` | Open-Elevation public API | Elevation lookup for the drawn area |
-| `ELEVATION_BATCH_SIZE` | `50` | Points per Open-Elevation request |
-| `ELEVATION_MAX_RETRIES` | `1` | Retries per batch before giving up |
+| `OPENZENITH_URL` | `https://openzenith.org` | Primary elevation source — handles up to 2000 points/request, no API key |
+| `OPENZENITH_REQUEST_TIMEOUT_S` / `OPENZENITH_MAX_RETRIES` | `30` / `1` | Bounded like every other external call |
+| `ELEVATION_BATCH_SIZE` | `1000` | Outer batch size, sized for OpenZenith's large per-request limit |
+| `ELEVATION_FALLBACK_BATCH_SIZE` | `50` | Sub-batch size when re-chunking OpenZenith's leftovers for Open-Elevation/OpenTopoData |
+| `ELEVATION_MAX_RETRIES` | `1` | Retries per batch before giving up (fallback providers) |
 | `ELEVATION_MAX_CONCURRENT_REQUESTS` | `12` | Batches fetched in parallel (bounds wall-clock time) |
 | `ELEVATION_TOTAL_BUDGET_S` | `45` | Hard wall-clock cap on the whole elevation fetch — bounds worst case regardless of grid size or how badly the providers are behaving |
-| `ELEVATION_FALLBACK_ENABLED` / `OPENTOPODATA_URL` | `true` / OpenTopoData public API | Fallback provider for any points Open-Elevation can't return — including its domain being unreachable from a given network while others are fine |
+| `OPEN_ELEVATION_URL` | Open-Elevation public API | First fallback — only used for points OpenZenith couldn't provide |
+| `ELEVATION_FALLBACK_ENABLED` / `OPENTOPODATA_URL` | `true` / OpenTopoData public API | Second fallback — only used for points neither OpenZenith nor Open-Elevation could return |
 | `SELECTED_AREA_MAX_KM2` | `25` | Reject polygons larger than this |
 | `SELECTED_AREA_MAX_GRID_POINTS` | `2500` | Auto-coarsen DEM resolution above this many cells |
 
@@ -174,10 +178,10 @@ All parameters are in `.env` (see `.env.example`):
 | Provider | Purpose | Status |
 |---|---|---|
 | Open-Meteo | Historical rainfall | **Implemented** (`app/services/rainfall_service.py`) |
-| Open-Elevation | Elevation for selected-area analysis | **Implemented** (`app/providers/elevation/open_elevation.py`) |
-| OpenTopoData | Elevation fallback (points Open-Elevation couldn't return) | **Implemented** (same file) |
+| OpenZenith | Primary elevation source for selected-area analysis | **Implemented** (`app/providers/elevation/open_elevation.py`) |
+| Open-Elevation | Elevation fallback (points OpenZenith couldn't return) | **Implemented** (same file) |
+| OpenTopoData | Second elevation fallback (points neither above could return) | **Implemented** (same file) |
 | Overpass (OpenStreetMap) | Buildings/roads/rivers/water bodies for the land-use constraint filter | **Implemented** (`app/providers/landuse/overpass.py`) |
-| OpenZenith | Elevation validation (contour path) | Not yet implemented |
 | NASA POWER / IMD | Rainfall alternatives | Not yet implemented |
 
 ---
@@ -217,7 +221,7 @@ backend/
 | Algorithm | File | Reference |
 |---|---|---|
 | Contour → DEM | `algorithms/interpolation.py` | scipy griddata (linear + nearest) |
-| Selected-area → DEM | `services/terrain_service.py` (`build_terrain_model_from_area`) | Open-Elevation grid fetch + nearest-neighbour gap fill |
+| Selected-area → DEM | `services/terrain_service.py` (`build_terrain_model_from_area`) | OpenZenith grid fetch (Open-Elevation → OpenTopoData fallback) + nearest-neighbour gap fill |
 | Depression Filling | `algorithms/depression.py` | Barnes et al. (2014) Priority-Flood |
 | Flow Direction | `algorithms/flow_direction.py` | D8 steepest-descent |
 | Flow Accumulation | `algorithms/flow_accumulation.py` | Kahn's topological sort |

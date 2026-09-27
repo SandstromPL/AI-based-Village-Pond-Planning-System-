@@ -39,10 +39,14 @@ class Settings(BaseSettings):
     score_weight_relief: float = 0.10
     score_weight_depression: float = 0.10
 
-    # ── External API Placeholders ───────────────────────────────────────────
-    # [EXTERNAL_API_PLACEHOLDER: OpenZenith]
-    openzenith_api_key: str = "PLACEHOLDER"
-    openzenith_base_url: str = "https://api.openzenith.example/v1"
+    # ── Elevation: OpenZenith (primary) ──────────────────────────────────────
+    # Verified live: GET /api/elevation and POST /api/elevation/batch (up to
+    # 2000 points/request) both work with no API key. openzenith.org is the
+    # correct domain — a docs mirror at openzenith.cyopsys.com sits behind an
+    # unsolvable Cloudflare JS challenge for server-side clients; don't use it.
+    openzenith_url: str = "https://openzenith.org"
+    openzenith_request_timeout_s: float = Field(default=30.0, gt=0, le=60)
+    openzenith_max_retries: int = Field(default=1, ge=0, le=5)
 
     # ── Rainfall: Open-Meteo Historical Weather API ─────────────────────────
     open_meteo_forecast_url: str = "https://api.open-meteo.com/v1/forecast"
@@ -67,10 +71,16 @@ class Settings(BaseSettings):
     imd_api_key: str = "PLACEHOLDER"
     imd_base_url: str = "https://imdpune.gov.in/api"
 
-    # ── Elevation: Open-Elevation API (for map-selected-area analysis) ──────
+    # ── Elevation: Open-Elevation API (fallback, for map-selected-area analysis) ──
     open_elevation_url: str = "https://api.open-elevation.com/api/v1/lookup"
     elevation_request_timeout_s: float = Field(default=15.0, gt=0, le=60)
-    elevation_batch_size: int = Field(default=50, ge=1, le=200)
+    # OpenZenith (primary) handles up to 2000 points/request — verified live
+    # at ~2.4s for 2000 and <1s for 1000, so this is the *outer* batching
+    # unit fetch_elevations() uses, kept safely under that cap. Points
+    # OpenZenith couldn't provide are re-chunked into elevation_fallback_batch_size
+    # for Open-Elevation/OpenTopoData, whose practical batch limits are far smaller.
+    elevation_batch_size: int = Field(default=1000, ge=1, le=2000)
+    elevation_fallback_batch_size: int = Field(default=50, ge=1, le=200)
     elevation_max_retries: int = Field(default=1, ge=0, le=5)
     elevation_max_concurrent_requests: int = Field(default=12, ge=1, le=30)
     # Hard wall-clock cap on the whole fetch_elevations() call, regardless of

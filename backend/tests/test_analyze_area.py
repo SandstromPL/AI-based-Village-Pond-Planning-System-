@@ -38,13 +38,27 @@ def _clear_caches():
     clear_landuse_cache()
 
 
-def _bowl_elevation_response(url, json=None, timeout=None, **kwargs):
-    results = []
-    for loc in json["locations"]:
-        dlat = loc["latitude"] - _CENTER_LAT
-        dlon = loc["longitude"] - _CENTER_LON
-        elevation = 100.0 + (dlat ** 2 + dlon ** 2) * 300_000.0
-        results.append({"elevation": elevation})
+def _bowl_elevation_at(lat, lon):
+    dlat = lat - _CENTER_LAT
+    dlon = lon - _CENTER_LON
+    return 100.0 + (dlat ** 2 + dlon ** 2) * 300_000.0
+
+
+def _bowl_openzenith_response(url, json=None, timeout=None, **kwargs):
+    results = [
+        {"lat": pt["lat"], "lon": pt["lon"], "elevation": _bowl_elevation_at(pt["lat"], pt["lon"])}
+        for pt in json["points"]
+    ]
+    return httpx.Response(
+        200, json={"results": results}, request=httpx.Request("POST", url)
+    )
+
+
+def _bowl_open_elevation_response(url, json=None, timeout=None, **kwargs):
+    results = [
+        {"elevation": _bowl_elevation_at(loc["latitude"], loc["longitude"])}
+        for loc in json["locations"]
+    ]
     return httpx.Response(
         200, json={"results": results}, request=httpx.Request("POST", url)
     )
@@ -55,12 +69,14 @@ def _empty_overpass_response(url, data=None, timeout=None, **kwargs):
 
 
 def _combined_post_response(url, json=None, data=None, timeout=None, **kwargs):
-    # httpx.post is a single shared global target — both the elevation
-    # provider and the Overpass land-use provider call it, so one mock
-    # must dispatch on the request shape (elevation sends json=, Overpass
-    # sends form-encoded data=) rather than assuming only one caller.
+    # httpx.post is a single shared global target — OpenZenith (tried
+    # first), its Open-Elevation fallback, and the Overpass land-use
+    # provider all call it, so one mock must dispatch on the request shape
+    # rather than assuming only one caller.
+    if json is not None and "points" in json:
+        return _bowl_openzenith_response(url, json=json, timeout=timeout, **kwargs)
     if json is not None and "locations" in json:
-        return _bowl_elevation_response(url, json=json, timeout=timeout, **kwargs)
+        return _bowl_open_elevation_response(url, json=json, timeout=timeout, **kwargs)
     return _empty_overpass_response(url, data=data, timeout=timeout, **kwargs)
 
 
