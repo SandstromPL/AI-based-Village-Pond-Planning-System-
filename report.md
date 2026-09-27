@@ -233,7 +233,7 @@ app's architecture, still needs to be produced for `Figure~\ref{fig:architecture
 **Backend**: Python, FastAPI 0.115, Pydantic 2.8 / pydantic-settings 2.4,
 Uvicorn. Geospatial: GeoPandas 0.14, Shapely 2.0, pyproj 3.6, Fiona 1.9,
 rasterio 1.3. Numerical: NumPy 1.26, SciPy 1.14. KML/XML: lxml. HTTP client:
-httpx. Testing: pytest + pytest-asyncio (39 tests).
+httpx. Testing: pytest + pytest-asyncio (53 tests).
 
 **Frontend**: React 19, Vite 8, Leaflet 1.9 + react-leaflet 5 +
 `leaflet-draw` (pinned to 1.0.2 — see §9 Discussion for why), plain CSS with
@@ -260,6 +260,31 @@ HTTP client, no browser needed, and is what's actually used. Open-Elevation
 and OpenTopoData sit behind it as a two-tier fallback chain for resilience.
 No database (PostgreSQL+PostGIS was considered in early planning) was used
 in the end — see §7.3 for the honest reasoning.
+
+**Update, later in development — OpenZenith reliability claim above was
+premature and is corrected here.** Extended testing on the actual grading/
+lab network (a shared university machine) showed OpenZenith failing
+frequently (DNS resolution failures, connection resets, "network
+unreachable") — not the "consistently reliable" behavior observed in
+earlier isolated testing. Root-caused directly: hitting `openzenith.org`
+five times in quick succession from an *unrelated* network (not the lab)
+produced three `200 OK` responses then two `HTTP 503` responses carrying
+Cloudflare error code **1102 — "Origin Rate Limited"** — confirming
+OpenZenith enforces a real, undocumented rate limit (nothing about it
+appears in its own OpenAPI spec) that trips after only a handful of rapid
+requests, recovering on its own roughly 60–90 seconds later. With an entire
+class concurrently hitting the same free service — very plausibly from one
+shared/NAT'd university IP — this limit is easy to trip continuously.
+Open-Elevation was separately confirmed to enforce its own real rate limit
+too: a live log captured an explicit `HTTP 429 Too Many Requests` response
+from it directly (not a connection failure — a clean, honest rate-limit
+response). This reframes the earlier resilience narrative: the three-tier
+elevation fallback chain (and the OpenTopoData 1 req/s throttle added after
+finding OpenTopoData's own documented limit) is not just defending against
+generic network flakiness — it is regularly absorbing *real, confirmed
+rate-limiting* from more than one of its own providers, and doing so
+without ever failing the whole request as long as at least one tier has
+remaining capacity.
 
 ---
 
@@ -415,7 +440,7 @@ external API calls.
 | **Error Handling and Resilience** | Every external call (4 independent APIs) degrades to `status: "unavailable"` + warning instead of raising; elevation additionally has a two-provider fallback chain and a hard 45s wall-clock deadline | Each of the four dependencies was observed to fail for real during development (DNS failures, rate limits, connection resets, bot-filtering 406s) — this is not a hypothetical concern, it is the normal operating condition observed on the actual deployment network |
 | **Algorithms and Complexity** | Priority-Flood depression filling (Barnes et al. 2014, near-linear via min-heap), D8 flow direction (O(cells)), flow accumulation via Kahn's topological sort (O(V+E)), watershed BFS, spatial NMS for candidate declustering | Chosen over naive/quadratic alternatives (e.g. pairwise distance checks, iterative relaxation for depression filling) specifically because the DEM grid can be tens of thousands of cells even for a small village |
 | **Design Patterns** | Interchangeable provider modules behind a consistent function interface (elevation: OpenZenith → Open-Elevation → OpenTopoData three-tier fallback; independently, rainfall and land-use each behind their own provider module); orchestrator pattern in `analysis_service.py` coordinating independently-testable stages | New providers can be added/swapped without touching the pipeline that calls them; the orchestrator is "the only component that knows the full pipeline order" (module docstring), keeping every other service independently testable |
-| **Testing Strategy** | 39 automated pytest tests (unit: KML parsing, rainfall/runoff/pond services, elevation provider batching/retry/fallback/deadline, land-use categorization/buffering/graceful-degradation; integration: both analysis endpoints end-to-end) + live browser verification (Playwright-driven Chrome) for the frontend, no unit-test framework added there by deliberate scope choice | Gives confidence that resilience behaviour (not just the happy path) is actually correct — several bugs in this project were caught specifically by *live* testing against real external APIs, not by unit tests with mocks |
+| **Testing Strategy** | 53 automated pytest tests (unit: KML parsing, rainfall/runoff/pond services, elevation provider batching/retry/fallback/deadline, land-use categorization/buffering/graceful-degradation; integration: both analysis endpoints end-to-end) + live browser verification (Playwright-driven Chrome) for the frontend, no unit-test framework added there by deliberate scope choice | Gives confidence that resilience behaviour (not just the happy path) is actually correct — several bugs in this project were caught specifically by *live* testing against real external APIs, not by unit tests with mocks |
 | **Version Control** | Incremental git commits per fix/feature with descriptive messages documenting root cause, fix, and how it was verified | Keeps the history itself a readable record of what was found and why each change was made, useful for this exact report |
 | Load Balancing | *Not implemented* | Single-instance deployment; out of scope at this project's scale |
 | Database Indexing / Query Optimization | *Not applicable* | No persistent database exists (see §5.3) |
@@ -530,6 +555,31 @@ Honest reflection, not just a features list:
   "elevation unavailable" error. Fixed by fetching those sub-batches
   concurrently (the same pattern already used elsewhere in the codebase)
   instead of one at a time.
+- **A permanent-cache-poisoning bug was found via live testing, not a unit
+  test.** The elevation point-cache stored `None` for any point that failed
+  every provider tier, exactly as a successful value would be stored — so
+  once a bad network moment failed a point, every later request for that
+  same area was served the cached failure forever, even after the network
+  fully recovered. Caught by noticing an identical failure count (and a
+  ~0.06s response time) on a retried request that should have taken tens of
+  seconds. Fixed by only caching non-`None` results.
+- **DEM padding (10%, avoids flow-routing edge artifacts) meant candidates
+  could legitimately render outside the user's drawn rectangle** on the
+  map-drawn-area path — including, in one observed run, the *recommended*
+  marker itself. Fixed with a `selection_polygon` hard filter: an accepted
+  candidate must fall inside the literal drawn polygon, while catchment
+  *boundaries* are deliberately left unrestricted, since a real drainage
+  basin is not bounded by an arbitrary rectangle.
+- **Sequential external calls were found to stack close to the frontend's
+  own request timeout.** A real log showed elevation (~65s, including an
+  inherent ~15-20s deadline overshoot — an in-flight request already
+  launched can't be aborted mid-socket-call) + land-use (~20-40s, previously
+  unbounded) + rainfall (~10s) totalling ~117 seconds end-to-end, dangerously
+  close to the frontend's 120s abort timeout. Fixed three ways: gave the
+  land-use fetch its own hard wall-clock budget (mirroring elevation's),
+  launched it concurrently with the elevation fetch (both only need the
+  drawn polygon's bbox, not the terrain), and increased the frontend's
+  timeout for additional margin.
 - **No database** means results don't survive a server restart and there is
   no way to browse past analyses. Acceptable for this assignment's scope;
   the module docstring already documents the intended upgrade path.
@@ -594,7 +644,7 @@ brief's actual requirement, not just "AI was used."]**
       providers/     — external API integrations (elevation/, landuse/)
       models/        — dataclasses + Pydantic schemas
       utils/         — geo helpers, GeoJSON, in-memory storage
-    tests/           — 39 pytest tests
+    tests/           — 53 pytest tests
   frontend/
     src/
       components/    — Header, ModeToggle, UploadPanel, DrawControls,
