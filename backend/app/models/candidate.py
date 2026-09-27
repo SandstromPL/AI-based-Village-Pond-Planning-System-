@@ -15,6 +15,7 @@ class CandidateStatus(str, Enum):
     REJECTED_BOUNDARY = "rejected_near_boundary"
     REJECTED_DUPLICATE = "rejected_duplicate"
     REJECTED_CONSTRAINT = "rejected_land_use_constraint"
+    REJECTED_OUTSIDE_SELECTION = "rejected_outside_selection"
 
 
 @dataclass

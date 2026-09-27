@@ -21,11 +21,11 @@ Strategy:
 from __future__ import annotations
 
 import logging
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 from pyproj import Transformer
-from shapely.geometry import Point
+from shapely.geometry import Point, Polygon
 
 from app.algorithms.scoring import score_and_rank_candidates
 from app.config import settings
@@ -44,6 +44,7 @@ def generate_candidates(
     terrain: TerrainModel,
     flow_data: FlowData,
     bbox: BoundingBox,
+    selection_polygon: Optional[Polygon] = None,
 ) -> Tuple[List[PondCandidate], List[str]]:
     """
     Generate and evaluate all pond candidates.
@@ -53,6 +54,14 @@ def generate_candidates(
         flow_data: FlowData with flow_direction and flow_accumulation.
         bbox:      WGS84 bounding box of the analysis area, used to fetch
                    land-use exclusion geometries (buildings/roads/rivers).
+        selection_polygon: The user's drawn polygon, already projected into
+                   terrain.projected_crs (selected-area analysis only). The
+                   DEM grid is padded beyond this polygon to avoid flow-
+                   routing edge artifacts, so a candidate can otherwise land
+                   in that padding margin, outside the area the user asked
+                   about — this rejects those. None (contour-upload path)
+                   skips this filter: there's no user-drawn shape narrower
+                   than the contour extent to restrict to.
 
     Returns:
         (candidates, warnings) — candidates scored and ranked; warnings
@@ -128,6 +137,16 @@ def generate_candidates(
             candidate.status = CandidateStatus.REJECTED_SLOPE
             candidate.rejection_reason = (
                 f"Slope {slope:.1f}° exceeds maximum {cfg.max_slope_deg}°"
+            )
+            candidates.append(candidate)
+            cid += 1
+            continue
+
+        # ── Hard filter: outside the user's drawn selection ───────────────
+        if selection_polygon is not None and not selection_polygon.contains(Point(x, y)):
+            candidate.status = CandidateStatus.REJECTED_OUTSIDE_SELECTION
+            candidate.rejection_reason = (
+                "Falls in the DEM's padding margin, outside the area you selected on the map"
             )
             candidates.append(candidate)
             cid += 1

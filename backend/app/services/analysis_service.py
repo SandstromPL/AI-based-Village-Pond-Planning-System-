@@ -22,6 +22,8 @@ import uuid
 from typing import List, Optional, Tuple
 
 import numpy as np
+from pyproj import Transformer
+from shapely.geometry import Polygon
 
 from app.config import settings
 from app.models.analysis import (
@@ -81,9 +83,36 @@ def run_area_analysis(
         bbox=_bbox_from_terrain(terrain),
     )
 
+    selection_polygon = _project_selection_polygon(polygon, terrain.projected_crs)
+
     return _run_from_terrain(
-        terrain, input_metadata, contour_data=None, warnings=list(area_warnings)
+        terrain,
+        input_metadata,
+        contour_data=None,
+        warnings=list(area_warnings),
+        selection_polygon=selection_polygon,
     )
+
+
+def _project_selection_polygon(
+    polygon: List[Tuple[float, float]],
+    projected_crs: str,
+) -> Optional[Polygon]:
+    """Project the user's drawn (lon, lat) polygon into the terrain's metric
+    CRS, so candidates can be checked against the literal area they selected
+    rather than the DEM's padded grid extent. Falls back to None (no
+    restriction) if the ring is degenerate — the padding-based filter is a
+    UX refinement, not something that should block an analysis."""
+    transformer = Transformer.from_crs("EPSG:4326", projected_crs, always_xy=True)
+    projected_coords = [transformer.transform(lon, lat) for lon, lat in polygon]
+    try:
+        poly = Polygon(projected_coords)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+        return poly if poly.is_valid and not poly.is_empty else None
+    except Exception as exc:
+        logger.warning("Could not project selection polygon for candidate filtering: %s", exc)
+        return None
 
 
 def _bbox_from_terrain(terrain: TerrainModel):
@@ -112,6 +141,7 @@ def _run_from_terrain(
     input_metadata: InputMetadata,
     contour_data: Optional[NormalizedContourData],
     warnings: List[str],
+    selection_polygon: Optional[Polygon] = None,
 ) -> AnalysisResult:
     """Shared pipeline tail: flow → candidates → rainfall → runoff → pond → geojson."""
     analysis_id = str(uuid.uuid4())
@@ -122,7 +152,9 @@ def _run_from_terrain(
     flow_data = compute_flow_data(terrain)
 
     logger.info("[analysis %s] Generating and evaluating pond candidates...", analysis_id)
-    candidates, constraint_warnings = generate_candidates(terrain, flow_data, input_metadata.bbox)
+    candidates, constraint_warnings = generate_candidates(
+        terrain, flow_data, input_metadata.bbox, selection_polygon=selection_polygon
+    )
     warnings.extend(constraint_warnings)
 
     accepted = [c for c in candidates if c.status == CandidateStatus.ACCEPTED]
