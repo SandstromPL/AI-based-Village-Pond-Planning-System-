@@ -89,6 +89,21 @@ def test_fetch_exclusion_geometries_returns_unavailable_on_timeout(mock_post):
 
 
 @patch("app.providers.landuse.overpass.httpx.post")
+def test_fetch_exclusion_geometries_does_not_retry_connect_errors(mock_post):
+    """A DNS/connection failure should not be retried — same reasoning as
+    the elevation provider cascade (see test_elevation_provider.py): a
+    same-second retry essentially never succeeds if DNS itself is broken,
+    and a real production log showed this doubling Overpass's failure time
+    from ~20s to ~40s for no benefit."""
+    mock_post.side_effect = httpx.ConnectError("Temporary failure in name resolution")
+
+    layers = fetch_exclusion_geometries(_BBOX)
+
+    assert layers.status == "unavailable"
+    assert mock_post.call_count == 1  # overpass_max_retries allows 2, but must stop after 1
+
+
+@patch("app.providers.landuse.overpass.httpx.post")
 def test_fetch_exclusion_geometries_does_not_cache_failures(mock_post):
     """A transient failure must not permanently disable the filter for this
     bbox — only successful results are cached, so a retry can succeed."""

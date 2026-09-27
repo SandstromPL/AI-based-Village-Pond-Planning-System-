@@ -97,6 +97,14 @@ def _fetch_from_overpass(bbox: BoundingBox) -> ExclusionLayers:
                 attempt + 1,
                 settings.overpass_max_retries + 1,
             )
+        except httpx.ConnectError as exc:
+            logger.warning(
+                "Overpass connection failed (DNS/network — not retrying): %s (attempt %d/%d).",
+                exc,
+                attempt + 1,
+                settings.overpass_max_retries + 1,
+            )
+            break  # a same-second retry essentially never fixes a broken DNS/connection
         except httpx.HTTPError as exc:
             logger.warning(
                 "Overpass request failed: %s (attempt %d/%d).",
