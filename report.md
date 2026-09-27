@@ -233,7 +233,7 @@ app's architecture, still needs to be produced for `Figure~\ref{fig:architecture
 **Backend**: Python, FastAPI 0.115, Pydantic 2.8 / pydantic-settings 2.4,
 Uvicorn. Geospatial: GeoPandas 0.14, Shapely 2.0, pyproj 3.6, Fiona 1.9,
 rasterio 1.3. Numerical: NumPy 1.26, SciPy 1.14. KML/XML: lxml. HTTP client:
-httpx. Testing: pytest + pytest-asyncio (53 tests).
+httpx. Testing: pytest + pytest-asyncio (70 tests).
 
 **Frontend**: React 19, Vite 8, Leaflet 1.9 + react-leaflet 5 +
 `leaflet-draw` (pinned to 1.0.2 — see §9 Discussion for why), plain CSS with
@@ -440,7 +440,7 @@ external API calls.
 | **Error Handling and Resilience** | Every external call (4 independent APIs) degrades to `status: "unavailable"` + warning instead of raising; elevation additionally has a two-provider fallback chain and a hard 45s wall-clock deadline | Each of the four dependencies was observed to fail for real during development (DNS failures, rate limits, connection resets, bot-filtering 406s) — this is not a hypothetical concern, it is the normal operating condition observed on the actual deployment network |
 | **Algorithms and Complexity** | Priority-Flood depression filling (Barnes et al. 2014, near-linear via min-heap), D8 flow direction (O(cells)), flow accumulation via Kahn's topological sort (O(V+E)), watershed BFS, spatial NMS for candidate declustering | Chosen over naive/quadratic alternatives (e.g. pairwise distance checks, iterative relaxation for depression filling) specifically because the DEM grid can be tens of thousands of cells even for a small village |
 | **Design Patterns** | Interchangeable provider modules behind a consistent function interface (elevation: OpenZenith → Open-Elevation → OpenTopoData three-tier fallback; independently, rainfall and land-use each behind their own provider module); orchestrator pattern in `analysis_service.py` coordinating independently-testable stages | New providers can be added/swapped without touching the pipeline that calls them; the orchestrator is "the only component that knows the full pipeline order" (module docstring), keeping every other service independently testable |
-| **Testing Strategy** | 53 automated pytest tests (unit: KML parsing, rainfall/runoff/pond services, elevation provider batching/retry/fallback/deadline, land-use categorization/buffering/graceful-degradation; integration: both analysis endpoints end-to-end) + live browser verification (Playwright-driven Chrome) for the frontend, no unit-test framework added there by deliberate scope choice | Gives confidence that resilience behaviour (not just the happy path) is actually correct — several bugs in this project were caught specifically by *live* testing against real external APIs, not by unit tests with mocks |
+| **Testing Strategy** | 70 automated pytest tests (unit: KML parsing, rainfall/runoff/pond services, elevation provider batching/retry/fallback/deadline, land-use categorization/buffering/graceful-degradation; integration: both analysis endpoints end-to-end) + live browser verification (Playwright-driven Chrome) for the frontend, no unit-test framework added there by deliberate scope choice | Gives confidence that resilience behaviour (not just the happy path) is actually correct — several bugs in this project were caught specifically by *live* testing against real external APIs, not by unit tests with mocks |
 | **Version Control** | Incremental git commits per fix/feature with descriptive messages documenting root cause, fix, and how it was verified | Keeps the history itself a readable record of what was found and why each change was made, useful for this exact report |
 | Load Balancing | *Not implemented* | Single-instance deployment; out of scope at this project's scale |
 | Database Indexing / Query Optimization | *Not applicable* | No persistent database exists (see §5.3) |
@@ -621,6 +621,34 @@ Honest reflection, not just a features list:
     adopted: this project already sends only one rainfall request per
     analysis, so throttling our own call rate further cannot fix a 429
     caused by *other* tenants sharing the same egress IP.
+- **A fundamentally different, more robust elevation architecture was
+  found by comparing notes with a peer implementation of the same
+  assignment**: instead of querying small, free, rate-limited REST APIs,
+  it reads **Copernicus DEM GLO-30** directly as Cloud-Optimized GeoTIFF
+  tiles hosted as public files on AWS S3 Open Data. This sidesteps the
+  entire class of failure documented above — there is no per-request
+  quota to exhaust on a static file server; it is not an API call being
+  rate-limited, it is a file being read. Verified live before adopting
+  it, not assumed: the exact tile-naming convention was guessed and
+  confirmed correct on the first try (`Copernicus_DSM_COG_10_N21_00_E081_00_DEM.tif`,
+  `HTTP 200`, no credentials needed), the existing `rasterio` dependency
+  could open it directly over HTTPS via GDAL's `/vsicurl/` virtual
+  filesystem with no new dependency, and the sampled elevation (269 m)
+  matched this project's own real KML contour dataset's known range
+  (267–298 m) for the same area. Implemented as a new first tier ahead of
+  OpenZenith (`app/providers/elevation/copernicus_dem.py`), with the
+  existing three-tier REST cascade kept completely intact as the fallback
+  for whatever it can't resolve — a pure addition, zero changes to the
+  already-tested resilience logic. Verified live end-to-end afterward: a
+  real `/analyzeArea` request resolved its entire grid via Copernicus DEM
+  alone (no OpenZenith/Open-Elevation/OpenTopoData calls at all), and,
+  separately, disabling it via a feature flag confirmed the existing
+  cascade still works exactly as before. The same idea applies to
+  rainfall (CHIRPS, a similar static-file dataset) but was scoped out of
+  this pass — CHIRPS has no pre-computed climatology, so a fresh
+  location's multi-year average would need on the order of 130 individual
+  monthly file reads, a heavier lift than elevation's one-or-two-tile
+  read per analysis, and worth a follow-up rather than bundling in here.
 - **Observation from testing on the actual grading/lab machine** (a
   student container, not the development sandbox): *every* external
   dependency — OpenZenith included, which had been perfectly reliable in
@@ -730,7 +758,7 @@ brief's actual requirement, not just "AI was used."]**
       providers/     — external API integrations (elevation/, landuse/)
       models/        — dataclasses + Pydantic schemas
       utils/         — geo helpers, GeoJSON, in-memory storage
-    tests/           — 53 pytest tests
+    tests/           — 70 pytest tests
   frontend/
     src/
       components/    — Header, ModeToggle, UploadPanel, DrawControls,

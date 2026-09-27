@@ -1,13 +1,18 @@
 """Elevation lookup for map-selected-area analysis (no KML/KMZ file involved).
 
-Three providers, tried in order, each independent infrastructure:
+Four providers, tried in order, each independent infrastructure:
 
-  1. OpenZenith (primary) — verified live to handle up to 2000 points per
+  0. Copernicus DEM (app/providers/elevation/copernicus_dem.py) — read
+     directly as static COG tiles from public AWS S3 storage, not queried
+     through a rate-limited REST API. No per-request quota to exhaust, so
+     it's tried first; the three tiers below remain the fallback for
+     whatever it can't resolve.
+  1. OpenZenith — verified live to handle up to 2000 points per
      batch request in a couple of seconds, no API key. (A docs mirror at
      openzenith.cyopsys.com sits behind an unsolvable Cloudflare JS
      challenge for server-side clients — openzenith.org is the correct,
      working domain; don't be fooled by the other one again.)
-  2. Open-Elevation — tried only for points OpenZenith could not provide.
+  2. Open-Elevation — tried only for points neither of the above could provide.
   3. OpenTopoData — tried only for points neither of the above could provide.
 
 A batch that fails every tier yields ``None`` for its points rather than
@@ -38,6 +43,7 @@ from typing import List, Optional, Tuple
 import httpx
 
 from app.config import settings
+from app.providers.elevation.copernicus_dem import fetch_from_copernicus_dem
 from app.utils import circuit_breaker
 from app.utils.http_client import DEFAULT_HEADERS
 
@@ -135,12 +141,26 @@ def clear_elevation_cache() -> None:
 
 
 def _fetch_batch_from_api(batch: List[Tuple[float, float]], deadline: float) -> List[Optional[float]]:
-    """Fetch a batch: OpenZenith first (handles the whole batch in one call),
-    then Open-Elevation, then OpenTopoData for whatever's still missing —
-    the latter two re-chunked into their own, much smaller, practical batch
-    size, since only OpenZenith has been verified to handle batches this
-    large."""
-    result = _fetch_from_openzenith(batch, deadline)
+    """Fetch a batch: Copernicus DEM first (a static file read, no rate
+    limit to worry about), then OpenZenith (handles the whole remaining
+    batch in one call), then Open-Elevation, then OpenTopoData for
+    whatever's still missing — the latter two re-chunked into their own,
+    much smaller, practical batch size, since only OpenZenith has been
+    verified to handle batches this large."""
+    result = fetch_from_copernicus_dem(batch, deadline)
+
+    missing_after_copernicus = [i for i, v in enumerate(result) if v is None]
+    if missing_after_copernicus and time.monotonic() < deadline:
+        logger.info(
+            "Falling back to OpenZenith/Open-Elevation/OpenTopoData for %d "
+            "point(s) Copernicus DEM could not provide.",
+            len(missing_after_copernicus),
+        )
+        rest_batch = [batch[i] for i in missing_after_copernicus]
+        rest_result = _fetch_from_openzenith(rest_batch, deadline)
+        for local_i, value in zip(missing_after_copernicus, rest_result):
+            if value is not None:
+                result[local_i] = value
 
     missing_indices = [i for i, v in enumerate(result) if v is None]
     if missing_indices and time.monotonic() < deadline:

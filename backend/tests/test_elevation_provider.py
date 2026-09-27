@@ -17,6 +17,16 @@ from app.utils import circuit_breaker
 
 @pytest.fixture(autouse=True)
 def _clear_cache_between_tests():
+    # Copernicus DEM is now tried before OpenZenith in every one of these
+    # tests' code path — disabled here so the existing OpenZenith/Open-
+    # Elevation/OpenTopoData-focused tests below stay pure unit tests
+    # (no real network) rather than every one of them also attempting a
+    # real S3 read. The one test that specifically exercises the
+    # Copernicus-DEM-then-cascade interaction re-enables it and mocks
+    # fetch_from_copernicus_dem directly instead.
+    original_copernicus_enabled = settings.copernicus_dem_enabled
+    settings.copernicus_dem_enabled = False
+
     clear_elevation_cache()
     circuit_breaker.clear_all()
     import app.providers.elevation.open_elevation as oe_module
@@ -26,6 +36,7 @@ def _clear_cache_between_tests():
     clear_elevation_cache()
     circuit_breaker.clear_all()
     oe_module._opentopodata_next_allowed_at = 0.0
+    settings.copernicus_dem_enabled = original_copernicus_enabled
 
 
 def _openzenith_response(batch, elevations):
@@ -97,6 +108,28 @@ def test_fetch_elevations_does_not_cache_failures(mock_post, mock_get, _mock_sle
     mock_post.return_value = _openzenith_response([point], [150.0])
     second = fetch_elevations([point])
     assert second == [150.0]  # retried fresh, not served a cached None
+
+
+@patch("app.providers.elevation.open_elevation.fetch_from_copernicus_dem")
+@patch("app.providers.elevation.open_elevation.httpx.post")
+def test_openzenith_cascade_only_runs_for_points_copernicus_dem_could_not_provide(
+    mock_post, mock_copernicus
+):
+    """Copernicus DEM is tried first; the existing REST cascade should only
+    ever be asked about whatever it couldn't resolve, not the whole batch."""
+    points = [(21.26, 81.28), (21.27, 81.29)]
+    # Copernicus DEM resolves the first point, leaves the second missing.
+    mock_copernicus.return_value = [111.0, None]
+    mock_post.return_value = _openzenith_response([points[1]], [222.0])
+
+    result = fetch_elevations(points)
+
+    assert result == [111.0, 222.0]
+    # OpenZenith (via httpx.post) must have been asked only for the point
+    # Copernicus DEM left missing, not the whole original batch.
+    call_payload = mock_post.call_args.kwargs["json"]
+    assert len(call_payload["points"]) == 1
+    assert call_payload["points"][0] == {"lat": points[1][0], "lon": points[1][1]}
 
 
 @patch("app.providers.elevation.open_elevation.httpx.post")

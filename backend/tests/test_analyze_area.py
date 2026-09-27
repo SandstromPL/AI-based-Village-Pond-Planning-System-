@@ -7,6 +7,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.main import app
 from app.providers.elevation.open_elevation import clear_elevation_cache
 from app.providers.landuse.overpass import clear_landuse_cache
@@ -31,6 +32,13 @@ _POLYGON = [
 
 @pytest.fixture(autouse=True)
 def _clear_caches():
+    # Copernicus DEM is now tried before OpenZenith — disabled here so
+    # this integration test's mocked httpx.post/get (OpenZenith/Open-
+    # Elevation/Overpass) are what actually get exercised, not a real S3
+    # read attempted ahead of them.
+    original_copernicus_enabled = settings.copernicus_dem_enabled
+    settings.copernicus_dem_enabled = False
+
     clear_elevation_cache()
     clear_rainfall_cache()
     clear_landuse_cache()
@@ -40,6 +48,7 @@ def _clear_caches():
     clear_rainfall_cache()
     clear_landuse_cache()
     circuit_breaker.clear_all()
+    settings.copernicus_dem_enabled = original_copernicus_enabled
 
 
 def _bowl_elevation_at(lat, lon):

@@ -49,7 +49,20 @@ class Settings(BaseSettings):
     score_weight_relief: float = 0.10
     score_weight_depression: float = 0.10
 
-    # ── Elevation: OpenZenith (primary) ──────────────────────────────────────
+    # ── Elevation: Copernicus DEM (tried first, ahead of OpenZenith) ─────────
+    # Read directly as Cloud-Optimized GeoTIFF tiles from public AWS S3 Open
+    # Data storage, not queried through a rate-limited REST API — there's no
+    # per-request quota to exhaust, so the failure mode here is network/DNS
+    # reachability to S3 itself, not rate-limiting. Verified live: the tile
+    # naming convention below, no credentials needed, and the sampled
+    # elevation matched this project's own real KML contour dataset's known
+    # range for the same area. Existing OpenZenith/Open-Elevation/OpenTopoData
+    # cascade remains the fallback for whatever this tier can't resolve.
+    copernicus_dem_enabled: bool = True
+    copernicus_dem_bucket_url: str = "https://copernicus-dem-30m.s3.amazonaws.com"
+    copernicus_dem_request_timeout_s: float = Field(default=15.0, gt=0, le=60)
+
+    # ── Elevation: OpenZenith (fallback tier 1) ──────────────────────────────
     # Verified live: GET /api/elevation and POST /api/elevation/batch (up to
     # 2000 points/request) both work with no API key. openzenith.org is the
     # correct domain — a docs mirror at openzenith.cyopsys.com sits behind an

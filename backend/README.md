@@ -83,9 +83,10 @@ KML/KMZ Upload                          Map-drawn Polygon
     ↓                                        ↓
 File Validation & Parsing            Bounding box + size/grid-point caps
     ↓                                        ↓
-DEM via contour interpolation        DEM via OpenZenith grid fetch
-    │                                        │ (cached, retried, nearest-
-    │                                        │  neighbour fallback on gaps)
+DEM via contour interpolation        DEM via Copernicus DEM tile reads
+    │                                        │ (OpenZenith/Open-Elevation/
+    │                                        │  OpenTopoData fallback,
+    │                                        │  nearest-neighbour gap fill)
     └───────────────────┬────────────────────┘
                          ↓
         Hydrological Conditioning (Priority-Flood depression fill)
@@ -158,7 +159,9 @@ All parameters are in `.env` (see `.env.example`):
 
 | Variable | Default | Description |
 |---|---|---|
-| `OPENZENITH_URL` | `https://openzenith.org` | Primary elevation source — handles up to 2000 points/request, no API key |
+| `COPERNICUS_DEM_ENABLED` | `true` | Tried first: reads Copernicus DEM GLO-30 directly as static COG tiles from public AWS S3 storage — a file read, not a rate-limited API call, so there's no per-request quota to exhaust |
+| `COPERNICUS_DEM_BUCKET_URL` / `COPERNICUS_DEM_REQUEST_TIMEOUT_S` | S3 Open Data bucket / `15` | Bucket base URL and GDAL HTTP timeout for opening/reading a tile |
+| `OPENZENITH_URL` | `https://openzenith.org` | Fallback tier 1 — handles up to 2000 points/request, no API key |
 | `OPENZENITH_REQUEST_TIMEOUT_S` / `OPENZENITH_MAX_RETRIES` | `15` / `1` | Kept tight relative to the 45s total budget so one failing batch can't consume it all before the fallback chain gets a turn |
 | `ELEVATION_BATCH_SIZE` | `1000` | Outer batch size, sized for OpenZenith's large per-request limit |
 | `ELEVATION_FALLBACK_BATCH_SIZE` | `50` | Sub-batch size when re-chunking OpenZenith's leftovers for Open-Elevation/OpenTopoData |
@@ -202,13 +205,14 @@ fetches elevation over the network, so there's nothing to overlap).
 | Provider | Purpose | Status |
 |---|---|---|
 | Open-Meteo | Historical rainfall | **Implemented** (`app/services/rainfall_service.py`) |
-| OpenZenith | Primary elevation source for selected-area analysis | **Implemented** (`app/providers/elevation/open_elevation.py`) |
-| Open-Elevation | Elevation fallback (points OpenZenith couldn't return) | **Implemented** (same file) |
-| OpenTopoData | Second elevation fallback (points neither above could return) | **Implemented** (same file) |
+| Copernicus DEM (AWS S3 Open Data) | Primary elevation source — static COG tile reads, no rate limit | **Implemented** (`app/providers/elevation/copernicus_dem.py`) |
+| OpenZenith | Elevation fallback tier 1 (points Copernicus DEM couldn't return) | **Implemented** (`app/providers/elevation/open_elevation.py`) |
+| Open-Elevation | Elevation fallback tier 2 | **Implemented** (same file) |
+| OpenTopoData | Elevation fallback tier 3 | **Implemented** (same file) |
 | Overpass (OpenStreetMap) | Buildings/roads/rivers/water bodies for the land-use constraint filter | **Implemented** (`app/providers/landuse/overpass.py`) |
 | NASA POWER / IMD | Rainfall alternatives | Not yet implemented |
 
-All four implemented providers above share a circuit breaker
+All five implemented providers above share a circuit breaker
 (`app/utils/circuit_breaker.py`): once one is seen rate-limited or
 unreachable, further requests skip it immediately for
 `CIRCUIT_BREAKER_COOLDOWN_S` instead of re-discovering the same failure
@@ -259,7 +263,7 @@ backend/
 | Algorithm | File | Reference |
 |---|---|---|
 | Contour → DEM | `algorithms/interpolation.py` | scipy griddata (linear + nearest) |
-| Selected-area → DEM | `services/terrain_service.py` (`build_terrain_model_from_area`) | OpenZenith grid fetch (Open-Elevation → OpenTopoData fallback) + nearest-neighbour gap fill |
+| Selected-area → DEM | `services/terrain_service.py` (`build_terrain_model_from_area`) | Copernicus DEM tile reads (OpenZenith → Open-Elevation → OpenTopoData fallback) + nearest-neighbour gap fill |
 | Depression Filling | `algorithms/depression.py` | Barnes et al. (2014) Priority-Flood |
 | Flow Direction | `algorithms/flow_direction.py` | D8 steepest-descent |
 | Flow Accumulation | `algorithms/flow_accumulation.py` | Kahn's topological sort |
