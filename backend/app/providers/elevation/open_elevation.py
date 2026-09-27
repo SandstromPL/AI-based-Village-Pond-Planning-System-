@@ -149,14 +149,31 @@ def _fetch_batch_from_api(batch: List[Tuple[float, float]], deadline: float) -> 
 
 def _fetch_fallback_chain(batch: List[Tuple[float, float]], deadline: float) -> List[Optional[float]]:
     """Open-Elevation, falling back to OpenTopoData, in sub-batches sized
-    for what these two providers can reliably handle."""
+    for what these two providers can reliably handle — fetched
+    concurrently, not sequentially.
+
+    This matters a lot in practice: OpenZenith failing a large batch (say
+    1000 points) can itself burn most of the deadline before giving up
+    (real retries against a flaky network aren't instant), leaving little
+    time for the fallback. A 1000-point batch re-chunks into 20 sub-batches
+    of 50 — fetching those one at a time could need 20 sequential round
+    trips and realistically rescue only the first one or two before the
+    deadline hits, turning a legitimately-recoverable batch into a mostly
+    "missing" one. Fetching all sub-batches concurrently (same pattern
+    already used for the outer batch loop in fetch_elevations) bounds the
+    wall-clock cost to roughly one round trip's worth of waves instead of
+    the full sequential count — observed for real: a request that would
+    have ended in a hard "elevation unavailable" 502 completed
+    successfully after this change (see git history for the log walkthrough)."""
     sub_size = settings.elevation_fallback_batch_size
+    sub_batches = [batch[i:i + sub_size] for i in range(0, len(batch), sub_size)]
     results: List[Optional[float]] = [None] * len(batch)
 
-    for start in range(0, len(batch), sub_size):
-        sub_batch = batch[start:start + sub_size]
+    def resolve_sub_batch(index: int) -> None:
+        start = index * sub_size
+        sub_batch = sub_batches[index]
         if time.monotonic() > deadline:
-            break
+            return
 
         sub_result = _fetch_from_open_elevation(sub_batch, deadline)
 
@@ -174,6 +191,11 @@ def _fetch_fallback_chain(batch: List[Tuple[float, float]], deadline: float) -> 
                         sub_result[local_i] = value
 
         results[start:start + len(sub_result)] = sub_result
+
+    if sub_batches:
+        workers = min(settings.elevation_max_concurrent_requests, len(sub_batches))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            list(executor.map(resolve_sub_batch, range(len(sub_batches))))
 
     return results
 

@@ -45,7 +45,13 @@ class Settings(BaseSettings):
     # correct domain — a docs mirror at openzenith.cyopsys.com sits behind an
     # unsolvable Cloudflare JS challenge for server-side clients; don't use it.
     openzenith_url: str = "https://openzenith.org"
-    openzenith_request_timeout_s: float = Field(default=30.0, gt=0, le=60)
+    # Kept fairly tight (vs. the 45s total budget): OpenZenith normally
+    # responds in 1-3s even for large batches, so this is generous for the
+    # happy path, but a batch failing both attempts at the max timeout
+    # would otherwise burn most of the whole deadline by itself, leaving
+    # the Open-Elevation/OpenTopoData fallback chain almost no time to
+    # actually rescue those points (observed for real in production logs).
+    openzenith_request_timeout_s: float = Field(default=15.0, gt=0, le=60)
     openzenith_max_retries: int = Field(default=1, ge=0, le=5)
 
     # ── Rainfall: Open-Meteo Historical Weather API ─────────────────────────

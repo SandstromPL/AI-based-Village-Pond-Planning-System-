@@ -151,6 +151,45 @@ def test_fetch_elevations_respects_total_time_budget(mock_post, mock_get):
             setattr(settings, key, value)
 
 
+def test_fallback_chain_fetches_sub_batches_concurrently():
+    """Regression test for a real production bug: when OpenZenith fails a
+    large batch, re-chunking it into small Open-Elevation sub-batches and
+    fetching them *sequentially* meant most of the deadline could be
+    consumed by OpenZenith's own retries before the fallback even started,
+    leaving time for only 1-2 of e.g. 20 sequential sub-batch calls —
+    turning a recoverable batch into a mostly-missing one and triggering a
+    false "elevation unavailable" error. Fetching sub-batches concurrently
+    fixes this; this test asserts the wall-clock time reflects
+    concurrency, not sequential execution."""
+    from app.providers.elevation.open_elevation import _fetch_fallback_chain
+
+    original_sub_size = settings.elevation_fallback_batch_size
+    settings.elevation_fallback_batch_size = 10
+    try:
+        batch = [(21.26 + i * 0.001, 81.28) for i in range(200)]  # 20 sub-batches
+
+        def slow_success(*args, **kwargs):
+            time.sleep(0.1)
+            sub_batch_size = len(args[1]["locations"]) if len(args) > 1 else 10
+            return _plain_response([100.0] * sub_batch_size)
+
+        with patch(
+            "app.providers.elevation.open_elevation.httpx.post", side_effect=slow_success
+        ):
+            deadline = time.monotonic() + 30  # plenty of budget, isolating concurrency itself
+            start = time.monotonic()
+            result = _fetch_fallback_chain(batch, deadline)
+            elapsed = time.monotonic() - start
+
+        assert result == [100.0] * 200
+        # Sequential would take ~20 * 0.1s = 2.0s; concurrent (12 workers,
+        # 2 waves) should be closer to 0.2-0.3s. Generous bound to avoid
+        # flakiness while still catching a regression to sequential.
+        assert elapsed < 1.0
+    finally:
+        settings.elevation_fallback_batch_size = original_sub_size
+
+
 @patch("app.providers.elevation.open_elevation.httpx.post")
 def test_fetch_elevations_chunks_large_point_lists(mock_post):
     original_batch_size = settings.elevation_batch_size

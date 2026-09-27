@@ -506,10 +506,30 @@ Honest reflection, not just a features list:
   user testing) and is worth explaining in a demo.
 - **External API reliability is the single biggest practical risk to this
   system's usability**, not any algorithmic weakness. During development,
-  all four external dependencies failed for real at least once, on the
+  all five external dependencies failed for real at least once, on the
   actual deployment network. The system's resilience design (graceful
   degradation everywhere) was not a hypothetical "nice to have" — it was
   repeatedly the difference between a working demo and a broken one.
+- **Observation from testing on the actual grading/lab machine** (a
+  student container, not the development sandbox): *every* external
+  dependency — OpenZenith included, which had been perfectly reliable in
+  earlier isolated testing — showed real transient failures there (DNS
+  resolution failures, connection resets, "network unreachable", gateway
+  timeouts), sometimes several within a single request. This confirms the
+  unreliability is a property of that network's egress in general, not any
+  one provider being uniquely bad, and it directly validated the project's
+  resilience-first design approach rather than being a hypothetical
+  concern. It also surfaced one genuine bug this way (not found by any
+  unit test): when OpenZenith failed a large batch late — after already
+  spending much of the shared time budget on its own retries — the
+  Open-Elevation/OpenTopoData fallback chain re-chunked that batch into
+  many small sub-batches but fetched them *sequentially*, so only the
+  first one or two could complete before the deadline. A batch that was
+  genuinely recoverable ended up mostly missing, occasionally pushing the
+  overall missing-data ratio over the 50% threshold and triggering a false
+  "elevation unavailable" error. Fixed by fetching those sub-batches
+  concurrently (the same pattern already used elsewhere in the codebase)
+  instead of one at a time.
 - **No database** means results don't survive a server restart and there is
   no way to browse past analyses. Acceptable for this assignment's scope;
   the module docstring already documents the intended upgrade path.

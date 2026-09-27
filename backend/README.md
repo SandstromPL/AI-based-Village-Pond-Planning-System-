@@ -151,7 +151,7 @@ All parameters are in `.env` (see `.env.example`):
 | Variable | Default | Description |
 |---|---|---|
 | `OPENZENITH_URL` | `https://openzenith.org` | Primary elevation source — handles up to 2000 points/request, no API key |
-| `OPENZENITH_REQUEST_TIMEOUT_S` / `OPENZENITH_MAX_RETRIES` | `30` / `1` | Bounded like every other external call |
+| `OPENZENITH_REQUEST_TIMEOUT_S` / `OPENZENITH_MAX_RETRIES` | `15` / `1` | Kept tight relative to the 45s total budget so one failing batch can't consume it all before the fallback chain gets a turn |
 | `ELEVATION_BATCH_SIZE` | `1000` | Outer batch size, sized for OpenZenith's large per-request limit |
 | `ELEVATION_FALLBACK_BATCH_SIZE` | `50` | Sub-batch size when re-chunking OpenZenith's leftovers for Open-Elevation/OpenTopoData |
 | `ELEVATION_MAX_RETRIES` | `1` | Retries per batch before giving up (fallback providers) |
