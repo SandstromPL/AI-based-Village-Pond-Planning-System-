@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from typing import Dict, Any, Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 

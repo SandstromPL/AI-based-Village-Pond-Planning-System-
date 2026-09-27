@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     logger.info(
-        "Village Pond Planning API v0.2.0 started. "
+        "Village Pond Planning API v0.3.0 started. "
         "Docs: http://%s:%d/docs",
         settings.app_host,
         settings.app_port,
@@ -56,7 +56,7 @@ def create_app() -> FastAPI:
             "maps and recommends pond sites based on catchment, drainage, rainfall, "
             "and terrain suitability analysis."
         ),
-        version="0.2.0",
+        version="0.3.0",
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",

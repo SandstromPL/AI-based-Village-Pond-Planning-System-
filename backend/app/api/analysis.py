@@ -2,6 +2,7 @@
 Analysis API Routes
 ====================
 POST /analyzeContour  — upload KML/KMZ, run full analysis, return results
+POST /analyzeArea     — submit a map-drawn polygon, run full analysis, return results
 GET  /analysis/{id}   — retrieve a previously computed analysis
 """
 
@@ -9,13 +10,11 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
-from app.models.candidate import CandidateStatus
 from app.models.requests import AreaAnalysisRequest
 from app.models.responses import (
     AnalysisResponse,

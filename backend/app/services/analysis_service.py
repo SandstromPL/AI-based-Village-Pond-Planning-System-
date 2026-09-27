@@ -33,7 +33,7 @@ from app.models.analysis import (
 )
 from app.models.candidate import CandidateStatus, PondCandidate
 from app.models.contour import NormalizedContourData
-from app.models.rainfall import NormalizedRainfallData, PondSizingResult, RunoffResult
+from app.models.rainfall import PondSizingResult, RunoffResult
 from app.models.terrain import TerrainModel
 from app.services.candidate_service import generate_candidates
 from app.services.catchment_service import compute_flow_data

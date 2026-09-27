@@ -4,7 +4,7 @@ These are the serializable versions of the internal dataclass models.
 """
 
 from __future__ import annotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 
 

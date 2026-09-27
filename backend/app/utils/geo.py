@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from typing import List, Tuple
 import numpy as np
-from pyproj import Proj, Transformer
+from pyproj import Transformer
 
 from app.models.contour import BoundingBox
 
@@ -29,18 +29,6 @@ def utm_epsg_from_lonlat(lon: float, lat: float) -> str:
 def get_transformer(src_crs: str, dst_crs: str) -> Transformer:
     """Return a pyproj Transformer for the given CRS pair (always_xy=True)."""
     return Transformer.from_crs(src_crs, dst_crs, always_xy=True)
-
-
-def lonlat_to_projected(
-    lons: np.ndarray,
-    lats: np.ndarray,
-    projected_crs: str,
-    source_crs: str = "EPSG:4326",
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Project arrays of lon/lat coordinates to a metric CRS."""
-    transformer = get_transformer(source_crs, projected_crs)
-    xs, ys = transformer.transform(lons, lats)
-    return xs, ys
 
 
 def projected_to_lonlat(

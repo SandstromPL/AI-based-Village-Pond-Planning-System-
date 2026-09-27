@@ -5,7 +5,7 @@ Pydantic models for pond candidate locations.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any
 
 
 class CandidateStatus(str, Enum):

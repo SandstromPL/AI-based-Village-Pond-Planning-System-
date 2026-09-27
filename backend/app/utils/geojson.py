@@ -6,12 +6,7 @@ Converts Shapely geometries and numpy masks to GeoJSON-compatible dicts.
 from __future__ import annotations
 from typing import List, Dict, Any, Optional
 import numpy as np
-from shapely.geometry import mapping, shape, MultiPolygon, Polygon
-
-
-def geom_to_geojson(geometry) -> Dict[str, Any]:
-    """Convert a Shapely geometry to a GeoJSON geometry dict."""
-    return mapping(geometry)
+from shapely.geometry import mapping
 
 
 def feature(geometry: Dict[str, Any], properties: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

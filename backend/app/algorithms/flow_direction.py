@@ -94,8 +94,3 @@ def compute_flow_direction(filled_dem: np.ndarray, resolution_m: float = 1.0) ->
         logger.debug("%d flat/undrained cells detected after D8 computation.", flat_count)
 
     return flow_dir
-
-
-def direction_to_offset(direction: int) -> Tuple[int, int]:
-    """Return the (row_delta, col_delta) for a given D8 direction index."""
-    return D8_OFFSETS[direction]

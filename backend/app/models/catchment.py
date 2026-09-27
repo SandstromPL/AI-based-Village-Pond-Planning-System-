@@ -3,8 +3,8 @@ Pydantic models for flow direction, flow accumulation, and catchment results.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import List, Tuple, Optional, Dict, Any
+from dataclasses import dataclass
+from typing import Optional, Dict, Any
 import numpy as np
 
 

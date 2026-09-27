@@ -3,7 +3,7 @@ Pydantic models for normalized contour data produced by the KML/KMZ parser.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Tuple, Optional
 
 
@@ -36,14 +36,6 @@ class BoundingBox:
     @property
     def center_lat(self) -> float:
         return (self.min_lat + self.max_lat) / 2.0
-
-    @property
-    def lon_range(self) -> float:
-        return self.max_lon - self.min_lon
-
-    @property
-    def lat_range(self) -> float:
-        return self.max_lat - self.min_lat
 
 
 @dataclass

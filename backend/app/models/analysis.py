@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 
-from app.models.contour import NormalizedContourData, BoundingBox
+from app.models.contour import BoundingBox
 from app.models.terrain import TerrainStatistics
 from app.models.candidate import PondCandidate
 from app.models.rainfall import NormalizedRainfallData, RunoffResult, PondSizingResult

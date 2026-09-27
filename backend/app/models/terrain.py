@@ -3,8 +3,8 @@ Pydantic models for the terrain representation (DEM, slope, statistics).
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from dataclasses import dataclass
+from typing import Tuple
 import numpy as np
 
 
@@ -53,9 +53,3 @@ class TerrainModel:
         x = self.origin_x + (col + 0.5) * self.resolution_m
         y = self.origin_y - (row + 0.5) * self.resolution_m
         return x, y
-
-    def projected_to_cell(self, x: float, y: float) -> Tuple[int, int]:
-        """Convert projected coordinates to nearest grid cell indices."""
-        col = int((x - self.origin_x) / self.resolution_m)
-        row = int((self.origin_y - y) / self.resolution_m)
-        return row, col
