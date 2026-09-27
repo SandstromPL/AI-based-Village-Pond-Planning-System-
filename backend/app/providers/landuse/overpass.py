@@ -24,6 +24,8 @@ from shapely.geometry import LineString, Polygon
 from app.config import settings
 from app.models.contour import BoundingBox
 from app.models.landuse import ExclusionLayers
+from app.utils import circuit_breaker
+from app.utils.http_client import DEFAULT_HEADERS
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,13 @@ def clear_landuse_cache() -> None:
 
 
 def _fetch_from_overpass(bbox: BoundingBox) -> ExclusionLayers:
+    if circuit_breaker.is_open("overpass"):
+        logger.warning("Overpass circuit open (recently rate-limited/unreachable); skipping.")
+        return ExclusionLayers(
+            status="unavailable",
+            message="Land-use constraint data is temporarily unavailable (Overpass recently failed; skipping for a cooldown period).",
+        )
+
     overpass_bbox = f"{bbox.min_lat},{bbox.min_lon},{bbox.max_lat},{bbox.max_lon}"
     query = _QUERY_TEMPLATE.format(
         timeout=int(settings.overpass_request_timeout_s), bbox=overpass_bbox
@@ -90,6 +99,7 @@ def _fetch_from_overpass(bbox: BoundingBox) -> ExclusionLayers:
             response = httpx.post(
                 settings.overpass_url,
                 data={"data": query},
+                headers=DEFAULT_HEADERS,
                 timeout=min(settings.overpass_request_timeout_s, remaining),
             )
             response.raise_for_status()
@@ -107,6 +117,8 @@ def _fetch_from_overpass(bbox: BoundingBox) -> ExclusionLayers:
                 attempt + 1,
                 settings.overpass_max_retries + 1,
             )
+            if exc.response.status_code in (429, 503):
+                circuit_breaker.trip("overpass", settings.circuit_breaker_cooldown_s)
         except httpx.ConnectError as exc:
             logger.warning(
                 "Overpass connection failed (DNS/network — not retrying): %s (attempt %d/%d).",
@@ -114,6 +126,7 @@ def _fetch_from_overpass(bbox: BoundingBox) -> ExclusionLayers:
                 attempt + 1,
                 settings.overpass_max_retries + 1,
             )
+            circuit_breaker.trip("overpass", settings.circuit_breaker_cooldown_s)
             break  # a same-second retry essentially never fixes a broken DNS/connection
         except httpx.HTTPError as exc:
             logger.warning(

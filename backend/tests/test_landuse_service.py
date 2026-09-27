@@ -12,6 +12,7 @@ from app.config import settings
 from app.models.contour import BoundingBox
 from app.providers.landuse.overpass import clear_landuse_cache, fetch_exclusion_geometries
 from app.services.landuse_service import build_exclusion_union
+from app.utils import circuit_breaker
 
 _BBOX = BoundingBox(min_lon=81.28, min_lat=21.26, max_lon=81.29, max_lat=21.27)
 
@@ -19,8 +20,10 @@ _BBOX = BoundingBox(min_lon=81.28, min_lat=21.26, max_lon=81.29, max_lat=21.27)
 @pytest.fixture(autouse=True)
 def _clear_cache_between_tests():
     clear_landuse_cache()
+    circuit_breaker.clear_all()
     yield
     clear_landuse_cache()
+    circuit_breaker.clear_all()
 
 
 def _overpass_response(elements):
@@ -102,6 +105,28 @@ def test_fetch_exclusion_geometries_does_not_retry_connect_errors(mock_post):
 
     assert layers.status == "unavailable"
     assert mock_post.call_count == 1  # overpass_max_retries allows 2, but must stop after 1
+
+
+@patch("app.providers.landuse.overpass.httpx.post")
+def test_tripped_circuit_skips_overpass_without_any_http_call(mock_post):
+    circuit_breaker.trip("overpass", cooldown_s=30.0)
+    mock_post.return_value = _overpass_response([])  # would succeed if called
+
+    layers = fetch_exclusion_geometries(_BBOX)
+
+    assert layers.status == "unavailable"
+    mock_post.assert_not_called()
+
+
+@patch("app.providers.landuse.overpass.httpx.post")
+def test_overpass_rate_limit_response_trips_the_circuit(mock_post):
+    request = httpx.Request("POST", "https://overpass.openstreetmap.fr/api/interpreter")
+    response = httpx.Response(429, request=request)
+    mock_post.side_effect = httpx.HTTPStatusError("rate limited", request=request, response=response)
+
+    fetch_exclusion_geometries(_BBOX)
+
+    assert circuit_breaker.is_open("overpass") is True
 
 
 @patch("app.providers.landuse.overpass.time.sleep", return_value=None)

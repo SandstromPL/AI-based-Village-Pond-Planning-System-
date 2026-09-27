@@ -11,6 +11,7 @@ from app.main import app
 from app.providers.elevation.open_elevation import clear_elevation_cache
 from app.providers.landuse.overpass import clear_landuse_cache
 from app.services.rainfall_service import clear_rainfall_cache
+from app.utils import circuit_breaker
 
 client = TestClient(app)
 
@@ -33,10 +34,12 @@ def _clear_caches():
     clear_elevation_cache()
     clear_rainfall_cache()
     clear_landuse_cache()
+    circuit_breaker.clear_all()
     yield
     clear_elevation_cache()
     clear_rainfall_cache()
     clear_landuse_cache()
+    circuit_breaker.clear_all()
 
 
 def _bowl_elevation_at(lat, lon):

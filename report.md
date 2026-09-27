@@ -535,6 +535,92 @@ Honest reflection, not just a features list:
   actual deployment network. The system's resilience design (graceful
   degradation everywhere) was not a hypothetical "nice to have" — it was
   repeatedly the difference between a working demo and a broken one.
+- **Direct testing of each provider, bypassing our backend entirely** (to
+  separate "our code" from "the provider itself"), plus researching what's
+  publicly known about each one, confirmed the unreliability is inherent
+  to these services, not specific to any one network:
+  - *OpenZenith*: 2 of 3 quick requests got HTTP 503 with Cloudflare error
+    1102 ("Origin Rate Limited"). Its GitHub repo (`aliasfoxkde/OpenZenith`)
+    shows a solo-developer hobby project — 1 star, zero issues ever filed —
+    deployed on Cloudflare Pages/Workers. The 503s are almost certainly
+    default Cloudflare free-tier limits on an unfunded project, not an
+    engineered capacity plan; recovers in roughly 60–90 seconds once tripped.
+  - *Open-Elevation*: 3 of 3 succeeded but slow (0.8–1.3s per single-point
+    lookup). Multiple open GitHub issues on the official repo (#29, #46,
+    #33) report the identical symptoms — timeouts, SSL failures, 504s — on
+    the public instance; the maintainers themselves describe it serving
+    "millions of users every day" as a free, donation-funded service, and
+    recommend self-hosting for production use.
+  - *OpenTopoData*: mostly fine, but a live burst test caught a genuine,
+    clean HTTP 429 — matching its documented 1 req/s limit exactly (already
+    throttled in this project's code from an earlier fix).
+  - *Overpass*: the mirror in use (`maps.mail.ru`) took 13–15 seconds per
+    request and one request got no response at all in 15s. It isn't even
+    listed on OSM's own Overpass status page — it's an unaffiliated
+    third-party proxy, not a community-run instance. Live-testing the two
+    commonly-recommended alternatives with a *simple* query found
+    `overpass.openstreetmap.fr` answering in ~1 second twice, while
+    `overpass.kumi.systems` (reported elsewhere as well-provisioned) timed
+    out completely twice — but re-testing with the project's actual,
+    heavier combined query (all five feature categories in one request)
+    immediately after switching the default turned up a **second, distinct
+    root cause**: `overpass.openstreetmap.fr` rejected the real request
+    with `HTTP 403 "This service is only available to white-listed
+    usages"`, and separately the flagship `overpass-api.de`/`lz4.overpass-
+    api.de` instances were still returning their earlier-observed `HTTP
+    406` for the same request. Both turned out to be the *same*
+    underlying cause: this project's HTTP client was sending httpx's
+    generic default User-Agent (`python-httpx/0.27.2`), which multiple
+    Overpass operators bot-filter or gate behind exactly the kind of
+    "identify yourself" policy the 403 message describes. Adding a
+    descriptive `User-Agent` header (`app/utils/http_client.py`, applied
+    to every external HTTP call this project makes, not just Overpass)
+    immediately fixed both: `overpass.openstreetmap.fr` returned `200 OK`
+    in 2.7s, and `lz4.overpass-api.de` in 3.4s, on the identical request
+    that was rejected moments earlier. Verified end-to-end afterward: a
+    real `/analyzeArea` run completed in 2.09s with the land-use filter
+    actually active (2 accepted, 9 rejected) — not skipped. This reframes
+    part of the "Overpass is just flaky" narrative: some of what looked
+    like provider unreliability this session was this project not
+    identifying itself as a client, not the providers themselves being
+    down.
+  - *Open-Meteo*: 3 of 3 requests hit HTTP 429 — every single attempt, at
+    a moment when Open-Meteo's own advertised free-tier limits (600/min,
+    10,000/day) should comfortably cover this project's usage (one rainfall
+    call per analysis). Open-Meteo's own GitHub issues (#438, #1650)
+    describe the same thing happening to other users despite low request
+    volume; separately, Render and UiPath both have public reports of
+    their platforms' shared outbound IPs getting collectively rate-limited
+    by Open-Meteo, because its quota is pooled per-IP across every
+    unrelated tenant sharing that egress address — the most plausible
+    explanation for hitting this on a university network (or any other
+    network sharing a public egress IP with many other users).
+  - **Resulting code changes**: a shared, in-memory circuit breaker
+    (`app/utils/circuit_breaker.py`) now sits in front of all four
+    implemented providers — once one is seen rate-limited (429/503) or
+    unreachable, further requests skip it immediately for a cooldown window
+    (default 60s) instead of a brand-new request re-discovering the same
+    failure from scratch every time, which is exactly what repeated manual
+    testing against an already-rate-limited OpenZenith was paying for. A
+    descriptive `User-Agent` header (`app/utils/http_client.py`) is now
+    sent with every external HTTP call this project makes, fixing the
+    bot-filtering/whitelist rejections described above.
+  - **Cross-checked against a second opinion (ChatGPT, given only a
+    generic description of the problem)**: its suggestions — provider
+    abstraction, multi-provider fallback, configurable timeouts, bounded/
+    sensible retries, a configurable Overpass URL, graceful degradation
+    with explicit per-source warnings — were all already implemented
+    earlier this session. Its two genuinely new suggestions (a better
+    Overpass mirror, a circuit breaker) are exactly what was added here.
+    Its suggestion to add SQLite/Redis caching was deliberately not
+    adopted — it conflicts with this project's own already-documented
+    scope decision (no database, single-session assignment), and adding a
+    persistence layer this close to submission was judged real
+    architectural risk for limited benefit at this project's scale. Its
+    suggestion to add Open-Meteo-specific rate limiting was also not
+    adopted: this project already sends only one rainfall request per
+    analysis, so throttling our own call rate further cannot fix a 429
+    caused by *other* tenants sharing the same egress IP.
 - **Observation from testing on the actual grading/lab machine** (a
   student container, not the development sandbox): *every* external
   dependency — OpenZenith included, which had been perfectly reliable in

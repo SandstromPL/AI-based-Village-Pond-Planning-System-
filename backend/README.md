@@ -124,6 +124,12 @@ the whole request.
 
 All parameters are in `.env` (see `.env.example`):
 
+### Cross-cutting resilience
+
+| Variable | Default | Description |
+|---|---|---|
+| `CIRCUIT_BREAKER_COOLDOWN_S` | `60` | Shared by all four external-provider fetch functions (OpenZenith, Open-Elevation, OpenTopoData, Overpass). After a provider is seen rate-limited (HTTP 429/503) or unreachable, further requests skip it immediately for this long instead of a brand-new request re-discovering the same failure from scratch every time |
+
 ### Terrain & candidate generation
 
 | Variable | Default | Description |
@@ -175,7 +181,7 @@ even after the network recovered. Now a later request simply retries it.
 | Variable | Default | Description |
 |---|---|---|
 | `LANDUSE_CONSTRAINT_ENABLED` | `true` | Reject candidates that fall on/near an existing building, road, waterway, water body, or power line |
-| `OVERPASS_URL` | a public Overpass mirror | OSM data source for exclusion geometries |
+| `OVERPASS_URL` | `overpass.openstreetmap.fr` (a recognized community-run instance) | OSM data source for exclusion geometries. A prior default, `maps.mail.ru`, was found to be an unaffiliated third-party proxy — not listed on OSM's own Overpass status page — and measured at 13-15s/request; this one was live-tested faster/working |
 | `OVERPASS_REQUEST_TIMEOUT_S` / `OVERPASS_MAX_RETRIES` | `20` / `1` | Bounded like every other external call — failure skips the filter (plus a warning), never blocks the analysis |
 | `OVERPASS_TOTAL_BUDGET_S` | `25` | Hard wall-clock cap on the whole Overpass fetch regardless of retry count — mirrors `ELEVATION_TOTAL_BUDGET_S`. Without it, two full-timeout attempts is an open-ended ~40s worst case that can stack with elevation's own worst case and approach the frontend's request timeout |
 | `LANDUSE_BUILDING_BUFFER_M` / `_ROAD_` / `_RIVER_` / `_POWERLINE_` | `100` / `50` / `30` / `75` | Buffer distance (metres) around each feature type |
@@ -201,6 +207,20 @@ fetches elevation over the network, so there's nothing to overlap).
 | OpenTopoData | Second elevation fallback (points neither above could return) | **Implemented** (same file) |
 | Overpass (OpenStreetMap) | Buildings/roads/rivers/water bodies for the land-use constraint filter | **Implemented** (`app/providers/landuse/overpass.py`) |
 | NASA POWER / IMD | Rainfall alternatives | Not yet implemented |
+
+All four implemented providers above share a circuit breaker
+(`app/utils/circuit_breaker.py`): once one is seen rate-limited or
+unreachable, further requests skip it immediately for
+`CIRCUIT_BREAKER_COOLDOWN_S` instead of re-discovering the same failure
+from scratch on every new analysis.
+
+Every external HTTP request also sends a descriptive `User-Agent`
+(`app/utils/http_client.py`). This was found to matter, not just be
+courtesy: httpx's generic default User-Agent got this project bot-filtered
+(HTTP 406) by the flagship Overpass instance and rejected (HTTP 403,
+"only available to white-listed usages") by a community mirror — both
+resolved immediately by identifying the client properly instead of
+looking like an anonymous script.
 
 ---
 

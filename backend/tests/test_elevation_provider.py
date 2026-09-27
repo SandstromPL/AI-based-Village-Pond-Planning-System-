@@ -12,16 +12,19 @@ from app.providers.elevation.open_elevation import (
     clear_elevation_cache,
     fetch_elevations,
 )
+from app.utils import circuit_breaker
 
 
 @pytest.fixture(autouse=True)
 def _clear_cache_between_tests():
     clear_elevation_cache()
+    circuit_breaker.clear_all()
     import app.providers.elevation.open_elevation as oe_module
 
     oe_module._opentopodata_next_allowed_at = 0.0
     yield
     clear_elevation_cache()
+    circuit_breaker.clear_all()
     oe_module._opentopodata_next_allowed_at = 0.0
 
 
@@ -136,6 +139,43 @@ def test_fetch_elevations_does_not_retry_connect_errors(mock_post):
     assert result == [123.4]  # still recovered via the Open-Elevation fallback
     # elevation_max_retries allows 2 attempts, but a ConnectError must stop after 1.
     assert openzenith_call_count == 1
+
+
+@patch("app.providers.elevation.open_elevation.httpx.post")
+def test_tripped_circuit_skips_openzenith_without_any_http_call(mock_post):
+    """A provider seen rate-limited/unreachable a moment ago shouldn't make
+    a brand-new request rediscover that from scratch — a real production
+    concern for OpenZenith specifically, which enforces an undocumented
+    Cloudflare-level rate limit that takes 60-90s to clear."""
+    from app.utils import circuit_breaker
+
+    circuit_breaker.trip("openzenith", cooldown_s=30.0)
+    mock_post.return_value = _plain_response([123.4])  # would succeed if called
+
+    result = fetch_elevations([(21.26, 81.28)])
+
+    assert result == [123.4]  # still recovered via the Open-Elevation fallback
+    assert mock_post.call_count == 1  # only the fallback call, OpenZenith skipped entirely
+
+
+@patch("app.providers.elevation.open_elevation.httpx.post")
+def test_openzenith_rate_limit_response_trips_the_circuit(mock_post):
+    point = (21.26, 81.28)
+
+    def dispatch(*args, **kwargs):
+        if _is_openzenith_call(args, kwargs):
+            request = httpx.Request("POST", "https://openzenith.org/api/elevation/batch")
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError("rate limited", request=request, response=response)
+        return _plain_response([123.4])
+
+    mock_post.side_effect = dispatch
+
+    from app.utils import circuit_breaker
+
+    fetch_elevations([point])
+
+    assert circuit_breaker.is_open("openzenith") is True
 
 
 @patch("app.providers.elevation.open_elevation.httpx.get")

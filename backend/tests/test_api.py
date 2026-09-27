@@ -9,6 +9,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
+from app.utils import circuit_breaker
 
 client = TestClient(app)
 
@@ -23,8 +24,10 @@ def _mock_overpass():
     def _empty_response(url, data=None, timeout=None, **kwargs):
         return httpx.Response(200, json={"elements": []}, request=httpx.Request("POST", url))
 
+    circuit_breaker.clear_all()
     with patch("app.providers.landuse.overpass.httpx.post", side_effect=_empty_response):
         yield
+    circuit_breaker.clear_all()
 
 
 def _get_sample_bytes():

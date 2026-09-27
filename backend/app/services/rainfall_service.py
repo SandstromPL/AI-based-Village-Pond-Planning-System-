@@ -17,6 +17,7 @@ import httpx
 
 from app.config import settings
 from app.models.rainfall import NormalizedRainfallData
+from app.utils.http_client import DEFAULT_HEADERS
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ def _get_cached_historical_rainfall(
         response = httpx.get(
             settings.open_meteo_archive_url,
             params=params,
+            headers=DEFAULT_HEADERS,
             timeout=settings.rainfall_request_timeout_s,
         )
         response.raise_for_status()

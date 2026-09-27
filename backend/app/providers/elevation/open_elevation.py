@@ -38,6 +38,8 @@ from typing import List, Optional, Tuple
 import httpx
 
 from app.config import settings
+from app.utils import circuit_breaker
+from app.utils.http_client import DEFAULT_HEADERS
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +212,10 @@ def _fetch_fallback_chain(batch: List[Tuple[float, float]], deadline: float) -> 
 
 
 def _fetch_from_openzenith(batch: List[Tuple[float, float]], deadline: float) -> List[Optional[float]]:
+    if circuit_breaker.is_open("openzenith"):
+        logger.warning("OpenZenith circuit open (recently rate-limited/unreachable); skipping.")
+        return [None] * len(batch)
+
     url = f"{settings.openzenith_url}/api/elevation/batch"
     payload = {"points": [{"lat": lat, "lon": lon} for lat, lon in batch]}
 
@@ -222,6 +228,7 @@ def _fetch_from_openzenith(batch: List[Tuple[float, float]], deadline: float) ->
             response = httpx.post(
                 url,
                 json=payload,
+                headers=DEFAULT_HEADERS,
                 timeout=min(settings.openzenith_request_timeout_s, remaining),
             )
             response.raise_for_status()
@@ -240,6 +247,8 @@ def _fetch_from_openzenith(batch: List[Tuple[float, float]], deadline: float) ->
                 attempt + 1,
                 settings.openzenith_max_retries + 1,
             )
+            if exc.response.status_code in (429, 503):
+                circuit_breaker.trip("openzenith", settings.circuit_breaker_cooldown_s)
         except httpx.ConnectError as exc:
             logger.warning(
                 "OpenZenith connection failed (DNS/network — not retrying): %s (attempt %d/%d).",
@@ -247,6 +256,7 @@ def _fetch_from_openzenith(batch: List[Tuple[float, float]], deadline: float) ->
                 attempt + 1,
                 settings.openzenith_max_retries + 1,
             )
+            circuit_breaker.trip("openzenith", settings.circuit_breaker_cooldown_s)
             break  # a same-second retry essentially never fixes a broken DNS/connection
         except httpx.HTTPError as exc:
             logger.warning(
@@ -295,6 +305,10 @@ def _parse_openzenith_response(data: dict, requested: List[Tuple[float, float]])
 
 
 def _fetch_from_open_elevation(batch: List[Tuple[float, float]], deadline: float) -> List[Optional[float]]:
+    if circuit_breaker.is_open("open-elevation"):
+        logger.warning("Open-Elevation circuit open (recently rate-limited/unreachable); skipping.")
+        return [None] * len(batch)
+
     payload = {
         "locations": [
             {"latitude": lat, "longitude": lon} for lat, lon in batch
@@ -310,6 +324,7 @@ def _fetch_from_open_elevation(batch: List[Tuple[float, float]], deadline: float
             response = httpx.post(
                 settings.open_elevation_url,
                 json=payload,
+                headers=DEFAULT_HEADERS,
                 timeout=min(settings.elevation_request_timeout_s, remaining),
             )
             response.raise_for_status()
@@ -328,6 +343,8 @@ def _fetch_from_open_elevation(batch: List[Tuple[float, float]], deadline: float
                 attempt + 1,
                 settings.elevation_max_retries + 1,
             )
+            if exc.response.status_code in (429, 503):
+                circuit_breaker.trip("open-elevation", settings.circuit_breaker_cooldown_s)
         except httpx.ConnectError as exc:
             logger.warning(
                 "Open-Elevation connection failed (DNS/network — not retrying): %s (attempt %d/%d).",
@@ -335,6 +352,7 @@ def _fetch_from_open_elevation(batch: List[Tuple[float, float]], deadline: float
                 attempt + 1,
                 settings.elevation_max_retries + 1,
             )
+            circuit_breaker.trip("open-elevation", settings.circuit_breaker_cooldown_s)
             break  # a same-second retry essentially never fixes a broken DNS/connection
         except httpx.HTTPError as exc:
             logger.warning(
@@ -395,6 +413,10 @@ def _throttle_opentopodata(deadline: float) -> bool:
 
 
 def _fetch_from_opentopodata(batch: List[Tuple[float, float]], deadline: float) -> List[Optional[float]]:
+    if circuit_breaker.is_open("opentopodata"):
+        logger.warning("OpenTopoData circuit open (recently rate-limited/unreachable); skipping.")
+        return [None] * len(batch)
+
     locations = "|".join(f"{lat},{lon}" for lat, lon in batch)
 
     for attempt in range(settings.elevation_max_retries + 1):
@@ -412,6 +434,7 @@ def _fetch_from_opentopodata(batch: List[Tuple[float, float]], deadline: float) 
             response = httpx.get(
                 settings.opentopodata_url,
                 params={"locations": locations},
+                headers=DEFAULT_HEADERS,
                 timeout=min(settings.elevation_request_timeout_s, remaining),
             )
             response.raise_for_status()
@@ -430,6 +453,8 @@ def _fetch_from_opentopodata(batch: List[Tuple[float, float]], deadline: float) 
                 attempt + 1,
                 settings.elevation_max_retries + 1,
             )
+            if exc.response.status_code in (429, 503):
+                circuit_breaker.trip("opentopodata", settings.circuit_breaker_cooldown_s)
         except httpx.ConnectError as exc:
             logger.warning(
                 "OpenTopoData connection failed (DNS/network — not retrying): %s (attempt %d/%d).",
@@ -437,6 +462,7 @@ def _fetch_from_opentopodata(batch: List[Tuple[float, float]], deadline: float) 
                 attempt + 1,
                 settings.elevation_max_retries + 1,
             )
+            circuit_breaker.trip("opentopodata", settings.circuit_breaker_cooldown_s)
             break  # a same-second retry essentially never fixes a broken DNS/connection
         except httpx.HTTPError as exc:
             logger.warning(

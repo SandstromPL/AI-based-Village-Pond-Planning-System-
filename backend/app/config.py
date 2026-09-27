@@ -19,6 +19,17 @@ class Settings(BaseSettings):
     app_port: int = 8000
     app_log_level: str = "info"
 
+    # ── Cross-cutting resilience ─────────────────────────────────────────────
+    # Shared by all four external-provider fetch functions (OpenZenith,
+    # Open-Elevation, OpenTopoData, Overpass — see app/utils/circuit_breaker.py).
+    # After a provider is seen rate-limited (HTTP 429/503) or unreachable
+    # (connection error), further requests skip it immediately for this long
+    # instead of a brand-new request re-discovering the same failure from
+    # scratch every time. One shared value for simplicity — between
+    # OpenZenith's observed ~60-90s rate-limit recovery and a shorter window
+    # that would suit a one-off connection blip.
+    circuit_breaker_cooldown_s: float = Field(default=60.0, gt=0, le=300)
+
     # ── Terrain Processing ──────────────────────────────────────────────────
     dem_resolution_m: float = Field(default=30.0, gt=0)
     dem_bbox_padding_frac: float = Field(default=0.10, ge=0, le=1)
@@ -106,12 +117,20 @@ class Settings(BaseSettings):
     # warning) rather than blocking the core pipeline — same philosophy as
     # rainfall/elevation above.
     landuse_constraint_enabled: bool = True
-    # The flagship overpass-api.de instance returned HTTP 406 (Apache/WAF-level
-    # bot filtering, not an application error) from this development
-    # environment's network — verified live, both GET and POST, with a
-    # browser-like User-Agent. This mirror was verified to work instead;
-    # override via .env if your deployment network reaches the flagship fine.
-    overpass_url: str = "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
+    # The flagship overpass-api.de instance returned HTTP 406, and this
+    # instance itself initially returned HTTP 403 ("only available to
+    # white-listed usages") for the project's real (multi-category) query —
+    # both turned out to be bot-filtering/identification gates, fixed by
+    # sending a descriptive User-Agent (see app/utils/http_client.py) with
+    # every request, not a capacity problem with either server. A prior
+    # default, maps.mail.ru, was separately found to be an unaffiliated
+    # third-party proxy, not listed on OSM's own Overpass status page, and
+    # measured at 13-15s/request; this instance is a recognized,
+    # community-run one, called "much more stable and reliable" on that
+    # same status page, and was live-tested working (2.7s, real query) once
+    # the User-Agent fix was in place. Override via .env if your deployment
+    # network reaches a different instance better.
+    overpass_url: str = "https://overpass.openstreetmap.fr/api/interpreter"
     overpass_request_timeout_s: float = Field(default=20.0, gt=0, le=60)
     overpass_max_retries: int = Field(default=1, ge=0, le=3)
     # Hard wall-clock cap on the whole _fetch_from_overpass call, regardless
