@@ -14,12 +14,13 @@ from app.models.rainfall import NormalizedRainfallData, RunoffResult, PondSizing
 
 @dataclass
 class InputMetadata:
-    filename: str
-    format: str                  # "KML" | "KMZ"
-    contour_count: int
-    min_elevation_m: float
-    max_elevation_m: float
+    source_type: str              # "contour_upload" | "selected_area"
     bbox: BoundingBox
+    filename: Optional[str] = None
+    format: Optional[str] = None            # "KML" | "KMZ" | "SELECTED_AREA"
+    contour_count: Optional[int] = None
+    min_elevation_m: Optional[float] = None
+    max_elevation_m: Optional[float] = None
 
 
 @dataclass
@@ -34,6 +35,8 @@ class RecommendedPond:
     score: float
     rank: int
     reasoning: List[str]
+    expected_annual_collection_m3: Optional[float] = None
+    planned_storage_m3: Optional[float] = None
 
 
 @dataclass

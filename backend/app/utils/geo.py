@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 import math
-from typing import Tuple
+from typing import List, Tuple
 import numpy as np
 from pyproj import Proj, Transformer
+
+from app.models.contour import BoundingBox
 
 
 def utm_zone_from_lon(lon: float) -> int:
@@ -56,6 +58,32 @@ def projected_to_lonlat(
 def cell_area_m2(resolution_m: float) -> float:
     """Area of a single grid cell in m²."""
     return resolution_m ** 2
+
+
+def bbox_from_polygon(coords: List[Tuple[float, float]]) -> BoundingBox:
+    """Return the WGS84 envelope (bounding box) of a polygon ring.
+
+    Args:
+        coords: List of (longitude, latitude) pairs, at least 3 points.
+    """
+    if len(coords) < 3:
+        raise ValueError(f"A polygon needs at least 3 points (got {len(coords)}).")
+
+    lons = [c[0] for c in coords]
+    lats = [c[1] for c in coords]
+    return BoundingBox(
+        min_lon=min(lons),
+        min_lat=min(lats),
+        max_lon=max(lons),
+        max_lat=max(lats),
+    )
+
+
+def approx_bbox_area_km2(bbox: BoundingBox) -> float:
+    """Approximate ground area of a WGS84 bounding box in km², via haversine edges."""
+    width_m = haversine_m(bbox.min_lon, bbox.center_lat, bbox.max_lon, bbox.center_lat)
+    height_m = haversine_m(bbox.center_lon, bbox.min_lat, bbox.center_lon, bbox.max_lat)
+    return (width_m * height_m) / 1_000_000.0
 
 
 def haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:

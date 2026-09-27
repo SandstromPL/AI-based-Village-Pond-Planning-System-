@@ -1,6 +1,10 @@
 """
-Pydantic models for rainfall, runoff, and pond sizing results.
-Phase 2: these are placeholder stubs. Real implementations come in Phase 3.
+Domain models for rainfall, runoff, and pond sizing results.
+
+All three are provider-agnostic result objects: ``status`` is "success" when
+real data was retrieved/computed, or "unavailable" when an upstream input
+(rainfall API, catchment area, prior stage) could not produce a usable value.
+Callers should always check ``status`` before using the numeric fields.
 """
 
 from __future__ import annotations
@@ -10,42 +14,35 @@ from typing import Optional, Dict
 
 @dataclass
 class NormalizedRainfallData:
-    """
-    Provider-agnostic rainfall representation.
-    Phase 2: all fields are None (placeholder).
-    """
+    """Provider-agnostic historical rainfall representation."""
 
-    status: str = "placeholder"
-    source: str = "EXTERNAL_API_PLACEHOLDER"
+    status: str = "unavailable"
+    source: str = "Open-Meteo Historical Weather API"
     annual_avg_mm: Optional[float] = None
     monthly_avg_mm: Optional[Dict[str, float]] = None   # {"Jan": 12.3, ...}
-    seasonal_mm: Optional[Dict[str, float]] = None       # {"monsoon": 800, ...}
-    message: str = "Rainfall API not yet configured. Add provider key in .env."
+    seasonal_mm: Optional[Dict[str, float]] = None       # {"monsoon_jun_sep_avg_mm": 800, ...}
+    message: str = "Rainfall data has not been retrieved yet."
 
 
 @dataclass
 class RunoffResult:
     """
-    Rational-method runoff estimate.
-    Phase 2: placeholder — C and i not yet determined.
-    Rational method: Q = C × i × A
+    Rational-method annual runoff estimate: Q = C × P × A.
+    C = runoff coefficient, P = annual rainfall depth, A = catchment area.
     """
 
-    status: str = "placeholder"
-    runoff_coefficient: Optional[float] = None    # C — needs soil/land-use data
+    status: str = "unavailable"
+    runoff_coefficient: Optional[float] = None
     annual_runoff_m3: Optional[float] = None
-    message: str = "EXTERNAL_API_PLACEHOLDER: Runoff coefficient needs soil/land-use data."
+    message: str = "Runoff has not been estimated yet."
 
 
 @dataclass
 class PondSizingResult:
-    """
-    Planning-level pond dimension estimates.
-    Phase 2: placeholder.
-    """
+    """Planning-level pond dimension estimates derived from annual runoff."""
 
-    status: str = "placeholder"
+    status: str = "unavailable"
     recommended_depth_m: Optional[float] = None
     estimated_surface_area_m2: Optional[float] = None
     estimated_storage_m3: Optional[float] = None
-    message: str = "EXTERNAL_API_PLACEHOLDER: Pond sizing needs runoff volume from rainfall API."
+    message: str = "Pond sizing has not been estimated yet."

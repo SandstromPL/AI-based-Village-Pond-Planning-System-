@@ -20,12 +20,13 @@ class BBoxSchema(BaseModel):
 
 
 class InputMetadataSchema(BaseModel):
-    filename: str
-    format: str
-    contour_count: int
-    min_elevation_m: float
-    max_elevation_m: float
+    source_type: str
     bbox: BBoxSchema
+    filename: Optional[str] = None
+    format: Optional[str] = None
+    contour_count: Optional[int] = None
+    min_elevation_m: Optional[float] = None
+    max_elevation_m: Optional[float] = None
 
 
 class TerrainSchema(BaseModel):
@@ -82,6 +83,8 @@ class RecommendedSchema(BaseModel):
     score: float
     rank: int
     reasoning: List[str]
+    expected_annual_collection_m3: Optional[float] = None
+    planned_storage_m3: Optional[float] = None
 
 
 class RainfallSchema(BaseModel):
@@ -159,8 +162,8 @@ class AnalysisResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str = "ok"
-    version: str = "0.2.0"
-    phase: str = "Phase 2 — Terrain & Catchment Analysis"
+    version: str = "0.3.0"
+    phase: str = "Phase 3 — Rainfall, Runoff, and Selected-Area Analysis"
 
 
 class ErrorResponse(BaseModel):

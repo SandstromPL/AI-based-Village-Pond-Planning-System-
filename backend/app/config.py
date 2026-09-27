@@ -44,8 +44,21 @@ class Settings(BaseSettings):
     openzenith_api_key: str = "PLACEHOLDER"
     openzenith_base_url: str = "https://api.openzenith.example/v1"
 
-    # [EXTERNAL_API_PLACEHOLDER: Open-Meteo]
-    open_meteo_base_url: str = "https://archive-api.open-meteo.com/v1"
+    # ── Rainfall: Open-Meteo Historical Weather API ─────────────────────────
+    open_meteo_forecast_url: str = "https://api.open-meteo.com/v1/forecast"
+    open_meteo_archive_url: str = "https://archive-api.open-meteo.com/v1/archive"
+    rainfall_history_start_year: int = Field(default=2015, ge=1900)
+    rainfall_history_end_year: int | None = Field(default=None, ge=1900)
+    rainfall_request_timeout_s: float = Field(default=10.0, gt=0, le=60)
+
+    # ── Planning-level runoff and pond assumptions ──────────────────────────
+    # The default coefficient represents mixed agricultural/semi-pervious land.
+    # It remains explicit until a land-cover provider is integrated.
+    runoff_coefficient_default: float = Field(default=0.35, ge=0, le=1)
+    pond_retention_factor: float = Field(default=0.80, gt=0, le=1)
+    pond_default_depth_m: float = Field(default=3.0, gt=0)
+    pond_steep_slope_threshold_deg: float = Field(default=5.0, gt=0)
+    pond_steep_slope_depth_m: float = Field(default=2.0, gt=0)
 
     # [EXTERNAL_API_PLACEHOLDER: NASA POWER]
     nasa_power_base_url: str = "https://power.larc.nasa.gov/api/temporal/daily/point"
@@ -53,6 +66,18 @@ class Settings(BaseSettings):
     # [EXTERNAL_API_PLACEHOLDER: IMD]
     imd_api_key: str = "PLACEHOLDER"
     imd_base_url: str = "https://imdpune.gov.in/api"
+
+    # ── Elevation: Open-Elevation API (for map-selected-area analysis) ──────
+    open_elevation_url: str = "https://api.open-elevation.com/api/v1/lookup"
+    elevation_request_timeout_s: float = Field(default=15.0, gt=0, le=60)
+    elevation_batch_size: int = Field(default=50, ge=1, le=200)
+    elevation_max_retries: int = Field(default=1, ge=0, le=5)
+    elevation_max_concurrent_requests: int = Field(default=5, ge=1, le=20)
+
+    # ── Map-selected-area analysis limits ────────────────────────────────────
+    # Bounds compute/API cost for a user-drawn polygon rather than a KML upload.
+    selected_area_max_km2: float = Field(default=25.0, gt=0)
+    selected_area_max_grid_points: int = Field(default=2500, ge=100)
 
 
 # Singleton instance imported across the app

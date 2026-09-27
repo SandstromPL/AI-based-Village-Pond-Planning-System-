@@ -3,10 +3,15 @@ Analysis Orchestrator Service
 ===============================
 Coordinates the complete analysis pipeline in the correct order:
 
-  KML/KMZ parse → Terrain → Flow → Candidates → Rainfall → Runoff → Pond → GeoJSON
+  [KML/KMZ parse | selected-area DEM fetch] → Terrain → Flow → Candidates
+  → Rainfall → Runoff → Pond → GeoJSON
 
 This service is the only component that knows the full pipeline order.
 All other services/algorithms are independently testable.
+
+Two public entry points share one pipeline tail:
+  - run_analysis(file_bytes, filename)     — KML/KMZ contour upload.
+  - run_area_analysis(polygon, resolution) — user-drawn map area (no file).
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -28,49 +33,95 @@ from app.models.analysis import (
 )
 from app.models.candidate import CandidateStatus, PondCandidate
 from app.models.contour import NormalizedContourData
+from app.models.rainfall import NormalizedRainfallData, PondSizingResult, RunoffResult
+from app.models.terrain import TerrainModel
 from app.services.candidate_service import generate_candidates
 from app.services.catchment_service import compute_flow_data
 from app.services.kml_service import parse_contour_file
 from app.services.pond_service import estimate_pond_size
 from app.services.rainfall_service import get_historical_rainfall
 from app.services.runoff_service import estimate_runoff
-from app.services.terrain_service import build_terrain_model
+from app.services.terrain_service import build_terrain_model, build_terrain_model_from_area
 from app.utils import geojson as gj
 
 logger = logging.getLogger(__name__)
 
 
 def run_analysis(file_bytes: bytes, filename: str) -> AnalysisResult:
-    """
-    Run the full pond planning analysis pipeline.
+    """Run the full pond planning analysis pipeline from an uploaded KML/KMZ file."""
+    logger.info("=== Starting contour-upload analysis for file: %s ===", filename)
 
-    Args:
-        file_bytes: Raw bytes of the uploaded KML/KMZ file.
-        filename:   Original filename.
-
-    Returns:
-        AnalysisResult containing all pipeline outputs.
-    """
-    analysis_id = str(uuid.uuid4())
-    t_start = time.perf_counter()
-    warnings: List[str] = []
-
-    logger.info("=== Starting analysis %s for file: %s ===", analysis_id, filename)
-
-    # ── Step 1: Parse KML/KMZ ────────────────────────────────────────────
-    logger.info("[1/7] Parsing contour file...")
     contour_data = parse_contour_file(file_bytes, filename)
-
-    # ── Step 2: Build terrain model ───────────────────────────────────────
-    logger.info("[2/7] Building terrain model (DEM + slope + depression fill)...")
     terrain = build_terrain_model(contour_data)
 
-    # ── Step 3: Compute flow data ─────────────────────────────────────────
-    logger.info("[3/7] Computing flow direction and accumulation...")
+    input_metadata = InputMetadata(
+        source_type="contour_upload",
+        bbox=contour_data.bbox,
+        filename=contour_data.source_filename,
+        format=contour_data.source_format,
+        contour_count=contour_data.contour_count,
+        min_elevation_m=contour_data.min_elevation,
+        max_elevation_m=contour_data.max_elevation,
+    )
+
+    return _run_from_terrain(terrain, input_metadata, contour_data=contour_data, warnings=[])
+
+
+def run_area_analysis(
+    polygon: List[Tuple[float, float]],
+    resolution_m: Optional[float] = None,
+) -> AnalysisResult:
+    """Run the full pond planning analysis pipeline for a user-drawn map area."""
+    logger.info("=== Starting selected-area analysis (%d polygon points) ===", len(polygon))
+
+    terrain, area_warnings = build_terrain_model_from_area(polygon, resolution_m)
+
+    input_metadata = InputMetadata(
+        source_type="selected_area",
+        bbox=_bbox_from_terrain(terrain),
+    )
+
+    return _run_from_terrain(
+        terrain, input_metadata, contour_data=None, warnings=list(area_warnings)
+    )
+
+
+def _bbox_from_terrain(terrain: TerrainModel):
+    """Reconstruct a WGS84 BoundingBox from a terrain grid's corners."""
+    from app.models.contour import BoundingBox
+    from app.utils.geo import projected_to_lonlat
+
+    rows, cols = terrain.shape
+    x0, y0 = terrain.origin_x, terrain.origin_y
+    x1 = x0 + cols * terrain.resolution_m
+    y1 = y0 - rows * terrain.resolution_m
+
+    lons, lats = projected_to_lonlat(
+        np.array([x0, x1]), np.array([y0, y1]), terrain.projected_crs
+    )
+    return BoundingBox(
+        min_lon=float(min(lons)),
+        min_lat=float(min(lats)),
+        max_lon=float(max(lons)),
+        max_lat=float(max(lats)),
+    )
+
+
+def _run_from_terrain(
+    terrain: TerrainModel,
+    input_metadata: InputMetadata,
+    contour_data: Optional[NormalizedContourData],
+    warnings: List[str],
+) -> AnalysisResult:
+    """Shared pipeline tail: flow → candidates → rainfall → runoff → pond → geojson."""
+    analysis_id = str(uuid.uuid4())
+    t_start = time.perf_counter()
+    warnings = list(warnings)
+
+    logger.info("[analysis %s] Computing flow direction and accumulation...", analysis_id)
     flow_data = compute_flow_data(terrain)
 
-    # ── Step 4: Generate candidates ───────────────────────────────────────
-    logger.info("[4/7] Generating and evaluating pond candidates...")
+    logger.info("[analysis %s] Generating and evaluating pond candidates...", analysis_id)
     candidates = generate_candidates(terrain, flow_data)
 
     accepted = [c for c in candidates if c.status == CandidateStatus.ACCEPTED]
@@ -83,31 +134,29 @@ def run_analysis(file_bytes: bytes, filename: str) -> AnalysisResult:
         )
         logger.warning("No accepted candidates found.")
 
-    # Best candidate = rank 1 (highest score)
-    best: Optional[PondCandidate] = next(
-        (c for c in accepted if c.rank == 1), None
-    )
+    best: Optional[PondCandidate] = next((c for c in accepted if c.rank == 1), None)
 
-    # ── Step 5: Rainfall (placeholder) ───────────────────────────────────
-    logger.info("[5/7] Fetching rainfall data (placeholder)...")
-    ref_lat = best.latitude if best else contour_data.bbox.center_lat
-    ref_lon = best.longitude if best else contour_data.bbox.center_lon
+    logger.info("[analysis %s] Fetching historical rainfall data...", analysis_id)
+    ref_lat = best.latitude if best else input_metadata.bbox.center_lat
+    ref_lon = best.longitude if best else input_metadata.bbox.center_lon
     rainfall = get_historical_rainfall(ref_lat, ref_lon)
 
-    # ── Step 6: Runoff estimation (placeholder) ───────────────────────────
-    logger.info("[6/7] Estimating runoff (placeholder)...")
+    logger.info("[analysis %s] Estimating annual runoff...", analysis_id)
     catchment_km2 = best.catchment_area_km2 if best else 0.0
     runoff = estimate_runoff(rainfall, catchment_km2)
 
-    # ── Step 7: Pond sizing (placeholder) ─────────────────────────────────
-    logger.info("[7/7] Estimating pond size (placeholder)...")
+    logger.info("[analysis %s] Estimating planning-level pond storage...", analysis_id)
     slope_at_best = best.slope_deg if best else None
     pond = estimate_pond_size(runoff, slope_at_best)
 
-    # ── Build GeoJSON layers ──────────────────────────────────────────────
-    geojson_layers = _build_geojson_layers(contour_data, candidates, best)
+    if rainfall.status != "success":
+        warnings.append(
+            "Historical rainfall is unavailable, so expected water volume and pond storage "
+            "could not be estimated. " + rainfall.message
+        )
 
-    # ── Build recommended result ──────────────────────────────────────────
+    geojson_layers = _build_geojson_layers(contour_data, candidates, best, runoff, pond)
+
     recommended = None
     if best:
         recommended = RecommendedPond(
@@ -121,6 +170,8 @@ def run_analysis(file_bytes: bytes, filename: str) -> AnalysisResult:
             score=best.score,
             rank=best.rank,
             reasoning=best.reasoning,
+            expected_annual_collection_m3=runoff.annual_runoff_m3,
+            planned_storage_m3=pond.estimated_storage_m3,
         )
 
     t_end = time.perf_counter()
@@ -138,14 +189,7 @@ def run_analysis(file_bytes: bytes, filename: str) -> AnalysisResult:
         analysis_id=analysis_id,
         status="success" if accepted else "partial",
         processing_time_s=processing_time,
-        input=InputMetadata(
-            filename=contour_data.source_filename,
-            format=contour_data.source_format,
-            contour_count=contour_data.contour_count,
-            min_elevation_m=contour_data.min_elevation,
-            max_elevation_m=contour_data.max_elevation,
-            bbox=contour_data.bbox,
-        ),
+        input=input_metadata,
         terrain=terrain.stats,
         candidates=candidates,
         recommended=recommended,
@@ -156,7 +200,7 @@ def run_analysis(file_bytes: bytes, filename: str) -> AnalysisResult:
         runoff=runoff,
         pond=pond,
         geojson_layers=geojson_layers,
-        assumptions=_build_assumptions(),
+        assumptions=_build_assumptions(rainfall.source, runoff.runoff_coefficient),
         warnings=warnings,
     )
 
@@ -164,26 +208,31 @@ def run_analysis(file_bytes: bytes, filename: str) -> AnalysisResult:
 # ── GeoJSON layer builder ─────────────────────────────────────────────────────
 
 def _build_geojson_layers(
-    contour_data: NormalizedContourData,
+    contour_data: Optional[NormalizedContourData],
     candidates: List[PondCandidate],
     best: Optional[PondCandidate],
+    runoff: RunoffResult,
+    pond: PondSizingResult,
 ) -> GeoJSONLayers:
     """Assemble all GeoJSON layers for the frontend."""
 
-    # Contour lines
-    contour_features = []
-    for contour in contour_data.contours:
-        coords = [[lon, lat] for lon, lat in contour.coordinates]
-        contour_features.append(
-            gj.linestring_feature(
-                coords,
-                properties={
-                    "elevation_m": contour.elevation_m,
-                    "contour_id": contour.contour_id,
-                },
+    # Contour lines (only present for the KML/KMZ upload path)
+    if contour_data is not None:
+        contour_features = []
+        for contour in contour_data.contours:
+            coords = [[lon, lat] for lon, lat in contour.coordinates]
+            contour_features.append(
+                gj.linestring_feature(
+                    coords,
+                    properties={
+                        "elevation_m": contour.elevation_m,
+                        "contour_id": contour.contour_id,
+                    },
+                )
             )
-        )
-    contour_fc = gj.feature_collection(contour_features)
+        contour_fc = gj.feature_collection(contour_features)
+    else:
+        contour_fc = gj.feature_collection([])
 
     # Candidate points
     candidate_features = []
@@ -202,6 +251,12 @@ def _build_geojson_layers(
                     "catchment_area_km2": c.catchment_area_km2,
                     "seed_type": c.seed_type,
                     "rejection_reason": c.rejection_reason,
+                    "expected_annual_collection_m3": (
+                        runoff.annual_runoff_m3 if c.rank == 1 else None
+                    ),
+                    "planned_storage_m3": (
+                        pond.estimated_storage_m3 if c.rank == 1 else None
+                    ),
                 },
             )
         )
@@ -216,6 +271,9 @@ def _build_geojson_layers(
                 "id": best.candidate_id,
                 "score": best.score,
                 "catchment_area_km2": best.catchment_area_km2,
+                "expected_annual_collection_m3": runoff.annual_runoff_m3,
+                "planned_storage_m3": pond.estimated_storage_m3,
+                "volume_status": pond.status,
                 "reasoning": best.reasoning,
             },
         )
@@ -250,11 +308,14 @@ def _build_geojson_layers(
         candidates=candidates_fc,
         recommended_location=recommended_feature,
         catchment_boundaries=catchment_fc,
-        drainage_network=None,  # Phase 3: extract from flow accumulation high-value cells
+        drainage_network=None,  # Future work: extract from flow accumulation high-value cells
     )
 
 
-def _build_assumptions() -> AnalysisAssumptions:
+def _build_assumptions(
+    rainfall_source: str,
+    runoff_coefficient: Optional[float],
+) -> AnalysisAssumptions:
     cfg = settings
     return AnalysisAssumptions(
         dem_resolution_m=cfg.dem_resolution_m,
@@ -271,6 +332,6 @@ def _build_assumptions() -> AnalysisAssumptions:
             "relief": cfg.score_weight_relief,
             "depression": cfg.score_weight_depression,
         },
-        rainfall_source="placeholder",
-        runoff_coefficient=None,
+        rainfall_source=rainfall_source,
+        runoff_coefficient=runoff_coefficient,
     )

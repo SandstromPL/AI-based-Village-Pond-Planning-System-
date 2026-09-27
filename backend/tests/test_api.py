@@ -32,7 +32,7 @@ def test_analyze_contour_returns_200():
     kml_bytes = _get_sample_bytes()
     resp = client.post(
         "/api/v1/analyzeContour",
-        files={"file": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
+        files={"contour_map": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
     )
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:500]}"
 
@@ -42,7 +42,7 @@ def test_analyze_contour_response_structure():
     kml_bytes = _get_sample_bytes()
     resp = client.post(
         "/api/v1/analyzeContour",
-        files={"file": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
+        files={"contour_map": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -61,7 +61,7 @@ def test_analyze_contour_has_recommended():
     kml_bytes = _get_sample_bytes()
     resp = client.post(
         "/api/v1/analyzeContour",
-        files={"file": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
+        files={"contour_map": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
     )
     data = resp.json()
     assert data["recommended"] is not None, "No recommended pond found"
@@ -76,7 +76,7 @@ def test_analyze_contour_bbox_match():
     kml_bytes = _get_sample_bytes()
     resp = client.post(
         "/api/v1/analyzeContour",
-        files={"file": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
+        files={"contour_map": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
     )
     data = resp.json()
     if data["recommended"] is None:
@@ -95,7 +95,7 @@ def test_get_analysis_by_id():
     kml_bytes = _get_sample_bytes()
     post_resp = client.post(
         "/api/v1/analyzeContour",
-        files={"file": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
+        files={"contour_map": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
     )
     analysis_id = post_resp.json()["analysis_id"]
 
@@ -114,7 +114,7 @@ def test_analyze_wrong_file_type_returns_400():
     """Uploading a non-KML file should return 400."""
     resp = client.post(
         "/api/v1/analyzeContour",
-        files={"file": ("terrain.shp", b"random bytes", "application/octet-stream")},
+        files={"contour_map": ("terrain.shp", b"random bytes", "application/octet-stream")},
     )
     assert resp.status_code == 400
 
@@ -124,7 +124,7 @@ def test_geojson_layers_present():
     kml_bytes = _get_sample_bytes()
     resp = client.post(
         "/api/v1/analyzeContour",
-        files={"file": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
+        files={"contour_map": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
     )
     data = resp.json()
     layers = data["geojson_layers"]

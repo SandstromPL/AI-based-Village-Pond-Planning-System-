@@ -12,9 +12,11 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from app.models.candidate import CandidateStatus
+from app.models.requests import AreaAnalysisRequest
 from app.models.responses import (
     AnalysisResponse,
     AssumptionsSchema,
@@ -31,8 +33,9 @@ from app.models.responses import (
     ScoreBreakdownSchema,
     TerrainSchema,
 )
-from app.services.analysis_service import run_analysis
+from app.services.analysis_service import run_analysis, run_area_analysis
 from app.services.kml_service import KMLParseError
+from app.services.terrain_service import AreaTooLargeError, ElevationUnavailableError
 from app.utils import storage
 
 logger = logging.getLogger(__name__)
@@ -108,8 +111,11 @@ async def analyze_contour(
         )
 
     # ── Run analysis ──────────────────────────────────────────────────────
+    # Offloaded to a thread: run_analysis is fully synchronous/blocking, and
+    # running it inline on the event loop would freeze every other request
+    # (including /health) for the whole duration of this one's analysis.
     try:
-        result = run_analysis(file_bytes, filename)
+        result = await run_in_threadpool(run_analysis, file_bytes, filename)
     except KMLParseError as exc:
         logger.warning("KML parse error for '%s': %s", filename, exc)
         raise HTTPException(
@@ -127,6 +133,54 @@ async def analyze_contour(
     storage.save(result)
 
     # ── Serialize and return ──────────────────────────────────────────────
+    return _to_response(result)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /analyzeArea
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post(
+    "/analyzeArea",
+    response_model=AnalysisResponse,
+    response_class=PrettyJSONResponse,
+    summary="Analyze a user-drawn map area for pond site selection",
+    description=(
+        "Submit a polygon (drawn on a map, no file upload) as [longitude, latitude] "
+        "pairs. The system fetches elevation for a grid sampled over the area, "
+        "analyzes terrain and drainage, and returns the same ranked recommendation "
+        "and GeoJSON layers as /analyzeContour."
+    ),
+    responses={
+        200: {"description": "Analysis complete"},
+        400: {"model": ErrorResponse, "description": "Invalid or oversized area"},
+        502: {"model": ErrorResponse, "description": "Elevation data unavailable"},
+        500: {"model": ErrorResponse, "description": "Internal analysis error"},
+    },
+    tags=["Analysis"],
+)
+async def analyze_area(request: AreaAnalysisRequest):
+    polygon = [(pt[0], pt[1]) for pt in request.polygon]
+
+    # Offloaded to a thread: elevation fetches and the terrain pipeline are
+    # blocking; keeping them off the event loop is what lets /health and
+    # other requests stay responsive while a slow area analysis is in flight.
+    try:
+        result = await run_in_threadpool(run_area_analysis, polygon, request.resolution_m)
+    except AreaTooLargeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except ElevationUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Unexpected error during selected-area analysis.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal analysis error: {exc}",
+        )
+
+    storage.save(result)
     return _to_response(result)
 
 
@@ -210,6 +264,8 @@ def _to_response(result) -> AnalysisResponse:
             score=r.score,
             rank=r.rank,
             reasoning=r.reasoning,
+            expected_annual_collection_m3=r.expected_annual_collection_m3,
+            planned_storage_m3=r.planned_storage_m3,
         )
 
     t = result.terrain
@@ -221,6 +277,7 @@ def _to_response(result) -> AnalysisResponse:
         status=result.status,
         processing_time_s=result.processing_time_s,
         input=InputMetadataSchema(
+            source_type=result.input.source_type,
             filename=result.input.filename,
             format=result.input.format,
             contour_count=result.input.contour_count,
