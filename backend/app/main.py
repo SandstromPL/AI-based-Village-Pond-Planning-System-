@@ -16,7 +16,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -68,10 +68,16 @@ def create_app() -> FastAPI:
     )
 
     # ── CORS ──────────────────────────────────────────────────────────────
+    # No cookie/session auth exists, so allow_credentials stays False —
+    # combining it with allow_origins=["*"] is invalid per the CORS spec
+    # (browsers reject responses that send both), and Starlette's actual
+    # (non-preflight) responses send a literal "*" rather than reflecting
+    # the request origin, so that invalid combination would surface for
+    # real the moment any frontend fetch call used `credentials: "include"`.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -86,12 +92,24 @@ def create_app() -> FastAPI:
         return response
 
     # ── Global exception handlers ─────────────────────────────────────────
+    # FastAPI's default HTTPException handling returns bare {"detail": ...},
+    # which doesn't match the ErrorResponse schema declared in the OpenAPI
+    # docs ({"status", "detail", "analysis_id"}) — a frontend built against
+    # the documented shape would get a different one at runtime. Overriding
+    # it here makes every error response (400/404/413/500/502) consistent.
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"status": "error", "detail": exc.detail, "analysis_id": None},
+        )
+
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
         logger.exception("Unhandled exception on %s %s", request.method, request.url)
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"status": "error", "detail": str(exc)},
+            content={"status": "error", "detail": str(exc), "analysis_id": None},
         )
 
     # ── Routers ───────────────────────────────────────────────────────────
