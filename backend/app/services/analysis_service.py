@@ -88,30 +88,24 @@ def run_analysis(file_bytes: bytes, filename: str) -> AnalysisResult:
         (c for c in accepted if c.rank == 1), None
     )
 
-    # ── Step 5: Historical rainfall ──────────────────────────────────────
-    logger.info("[5/7] Fetching historical rainfall data...")
+    # ── Step 5: Rainfall (placeholder) ───────────────────────────────────
+    logger.info("[5/7] Fetching rainfall data (placeholder)...")
     ref_lat = best.latitude if best else contour_data.bbox.center_lat
     ref_lon = best.longitude if best else contour_data.bbox.center_lon
     rainfall = get_historical_rainfall(ref_lat, ref_lon)
 
-    # ── Step 6: Runoff estimation ─────────────────────────────────────────
-    logger.info("[6/7] Estimating annual runoff...")
+    # ── Step 6: Runoff estimation (placeholder) ───────────────────────────
+    logger.info("[6/7] Estimating runoff (placeholder)...")
     catchment_km2 = best.catchment_area_km2 if best else 0.0
     runoff = estimate_runoff(rainfall, catchment_km2)
 
-    # ── Step 7: Pond sizing ───────────────────────────────────────────────
-    logger.info("[7/7] Estimating planning-level pond storage...")
+    # ── Step 7: Pond sizing (placeholder) ─────────────────────────────────
+    logger.info("[7/7] Estimating pond size (placeholder)...")
     slope_at_best = best.slope_deg if best else None
     pond = estimate_pond_size(runoff, slope_at_best)
 
-    if rainfall.status != "success":
-        warnings.append(
-            "Historical rainfall is unavailable, so expected water volume and pond storage "
-            "could not be estimated. " + rainfall.message
-        )
-
     # ── Build GeoJSON layers ──────────────────────────────────────────────
-    geojson_layers = _build_geojson_layers(contour_data, candidates, best, runoff, pond)
+    geojson_layers = _build_geojson_layers(contour_data, candidates, best)
 
     # ── Build recommended result ──────────────────────────────────────────
     recommended = None
@@ -127,8 +121,6 @@ def run_analysis(file_bytes: bytes, filename: str) -> AnalysisResult:
             score=best.score,
             rank=best.rank,
             reasoning=best.reasoning,
-            expected_annual_collection_m3=runoff.annual_runoff_m3,
-            planned_storage_m3=pond.estimated_storage_m3,
         )
 
     t_end = time.perf_counter()
@@ -164,7 +156,7 @@ def run_analysis(file_bytes: bytes, filename: str) -> AnalysisResult:
         runoff=runoff,
         pond=pond,
         geojson_layers=geojson_layers,
-        assumptions=_build_assumptions(rainfall.source, runoff.runoff_coefficient),
+        assumptions=_build_assumptions(),
         warnings=warnings,
     )
 
@@ -175,8 +167,6 @@ def _build_geojson_layers(
     contour_data: NormalizedContourData,
     candidates: List[PondCandidate],
     best: Optional[PondCandidate],
-    runoff,
-    pond,
 ) -> GeoJSONLayers:
     """Assemble all GeoJSON layers for the frontend."""
 
@@ -226,9 +216,6 @@ def _build_geojson_layers(
                 "id": best.candidate_id,
                 "score": best.score,
                 "catchment_area_km2": best.catchment_area_km2,
-                "expected_annual_collection_m3": runoff.annual_runoff_m3,
-                "planned_storage_m3": pond.estimated_storage_m3,
-                "volume_status": pond.status,
                 "reasoning": best.reasoning,
             },
         )
@@ -253,12 +240,6 @@ def _build_geojson_layers(
                         "rank": c.rank,
                         "area_km2": c.catchment_area_km2,
                         "is_recommended": c.rank == 1,
-                        "expected_annual_collection_m3": (
-                            runoff.annual_runoff_m3 if c.rank == 1 else None
-                        ),
-                        "planned_storage_m3": (
-                            pond.estimated_storage_m3 if c.rank == 1 else None
-                        ),
                     },
                 )
             )
@@ -273,10 +254,7 @@ def _build_geojson_layers(
     )
 
 
-def _build_assumptions(
-    rainfall_source: str,
-    runoff_coefficient: Optional[float],
-) -> AnalysisAssumptions:
+def _build_assumptions() -> AnalysisAssumptions:
     cfg = settings
     return AnalysisAssumptions(
         dem_resolution_m=cfg.dem_resolution_m,
@@ -293,6 +271,6 @@ def _build_assumptions(
             "relief": cfg.score_weight_relief,
             "depression": cfg.score_weight_depression,
         },
-        rainfall_source=rainfall_source,
-        runoff_coefficient=runoff_coefficient,
+        rainfall_source="placeholder",
+        runoff_coefficient=None,
     )

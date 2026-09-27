@@ -6,28 +6,10 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
-from app.models.rainfall import NormalizedRainfallData
 
 client = TestClient(app)
 
 SAMPLE_KML = os.path.join(os.path.dirname(__file__), "..", "data", "contours_1m.kml")
-
-
-@pytest.fixture(autouse=True)
-def mock_historical_rainfall(monkeypatch):
-    """Keep the terrain integration tests independent from provider rate limits."""
-    rainfall = NormalizedRainfallData(
-        status="success",
-        source="test fixture",
-        annual_avg_mm=1_000.0,
-        monthly_avg_mm={"Jan": 0.0},
-        seasonal_mm={"monsoon_jun_sep_avg_mm": 800.0},
-        message="test rainfall",
-    )
-    monkeypatch.setattr(
-        "app.services.analysis_service.get_historical_rainfall",
-        lambda _lat, _lon: rainfall,
-    )
 
 
 def _get_sample_bytes():
@@ -50,7 +32,7 @@ def test_analyze_contour_returns_200():
     kml_bytes = _get_sample_bytes()
     resp = client.post(
         "/api/v1/analyzeContour",
-        files={"contour_map": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
+        files={"file": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
     )
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:500]}"
 
@@ -60,7 +42,7 @@ def test_analyze_contour_response_structure():
     kml_bytes = _get_sample_bytes()
     resp = client.post(
         "/api/v1/analyzeContour",
-        files={"contour_map": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
+        files={"file": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -79,7 +61,7 @@ def test_analyze_contour_has_recommended():
     kml_bytes = _get_sample_bytes()
     resp = client.post(
         "/api/v1/analyzeContour",
-        files={"contour_map": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
+        files={"file": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
     )
     data = resp.json()
     assert data["recommended"] is not None, "No recommended pond found"
@@ -87,8 +69,6 @@ def test_analyze_contour_has_recommended():
     assert rec["catchment_area_km2"] > 0
     assert rec["score"] > 0
     assert len(rec["reasoning"]) > 0
-    assert rec["expected_annual_collection_m3"] is not None
-    assert rec["planned_storage_m3"] is not None
 
 
 def test_analyze_contour_bbox_match():
@@ -96,7 +76,7 @@ def test_analyze_contour_bbox_match():
     kml_bytes = _get_sample_bytes()
     resp = client.post(
         "/api/v1/analyzeContour",
-        files={"contour_map": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
+        files={"file": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
     )
     data = resp.json()
     if data["recommended"] is None:
@@ -115,7 +95,7 @@ def test_get_analysis_by_id():
     kml_bytes = _get_sample_bytes()
     post_resp = client.post(
         "/api/v1/analyzeContour",
-        files={"contour_map": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
+        files={"file": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
     )
     analysis_id = post_resp.json()["analysis_id"]
 
@@ -134,7 +114,7 @@ def test_analyze_wrong_file_type_returns_400():
     """Uploading a non-KML file should return 400."""
     resp = client.post(
         "/api/v1/analyzeContour",
-        files={"contour_map": ("terrain.shp", b"random bytes", "application/octet-stream")},
+        files={"file": ("terrain.shp", b"random bytes", "application/octet-stream")},
     )
     assert resp.status_code == 400
 
@@ -144,7 +124,7 @@ def test_geojson_layers_present():
     kml_bytes = _get_sample_bytes()
     resp = client.post(
         "/api/v1/analyzeContour",
-        files={"contour_map": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
+        files={"file": ("contours_1m.kml", kml_bytes, "application/vnd.google-earth.kml+xml")},
     )
     data = resp.json()
     layers = data["geojson_layers"]
@@ -153,4 +133,3 @@ def test_geojson_layers_present():
 
     assert layers["contour_lines"]["type"] == "FeatureCollection"
     assert len(layers["contour_lines"]["features"]) > 0
-    assert layers["recommended_location"]["properties"]["planned_storage_m3"] is not None
