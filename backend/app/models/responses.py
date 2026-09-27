@@ -82,6 +82,8 @@ class RecommendedSchema(BaseModel):
     score: float
     rank: int
     reasoning: List[str]
+    expected_annual_collection_m3: Optional[float] = None
+    planned_storage_m3: Optional[float] = None
 
 
 class RainfallSchema(BaseModel):

@@ -210,6 +210,8 @@ def _to_response(result) -> AnalysisResponse:
             score=r.score,
             rank=r.rank,
             reasoning=r.reasoning,
+            expected_annual_collection_m3=r.expected_annual_collection_m3,
+            planned_storage_m3=r.planned_storage_m3,
         )
 
     t = result.terrain
