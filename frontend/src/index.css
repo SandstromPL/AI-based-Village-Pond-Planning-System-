@@ -88,15 +88,42 @@ body {
 }
 
 .sidebar {
-  width: 340px;
+  width: var(--sidebar-width, 340px);
   flex-shrink: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  border-right: 1px solid var(--border);
   background: var(--bg);
+}
+
+/* Flex children shrink by default; without this, a tall ResultsPanel (long
+   candidate list/warnings) squeezes the mode toggle and the panel above it
+   down toward zero height instead of the sidebar simply scrolling — found
+   live: the mode-toggle buttons collapsed to ~2px tall and became
+   unclickable once real analysis results were long enough to overflow. */
+.sidebar > * {
+  flex-shrink: 0;
+}
+
+.sidebar-resizer {
+  flex-shrink: 0;
+  width: 6px;
+  cursor: col-resize;
+  background: var(--border);
+  touch-action: none;
+}
+
+.sidebar-resizer:hover,
+body.is-resizing-sidebar .sidebar-resizer {
+  background: var(--accent);
+}
+
+body.is-resizing-sidebar {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .map-container {
@@ -126,8 +153,10 @@ body {
   .sidebar {
     width: 100%;
     max-height: 45vh;
-    border-right: none;
     border-bottom: 1px solid var(--border);
+  }
+  .sidebar-resizer {
+    display: none;
   }
   .map-container {
     min-height: 320px;

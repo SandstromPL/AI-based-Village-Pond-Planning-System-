@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet-draw'
 import Header from './components/Header.jsx'
@@ -11,6 +11,20 @@ import LoadingOverlay from './components/LoadingOverlay.jsx'
 import ErrorBanner from './components/ErrorBanner.jsx'
 import { analyzeArea, analyzeContour, ApiError } from './api.js'
 import { useTheme } from './theme.js'
+
+const SIDEBAR_MIN_WIDTH = 260
+const SIDEBAR_MAX_WIDTH = 640
+const SIDEBAR_DEFAULT_WIDTH = 340
+
+function readStoredSidebarWidth() {
+  try {
+    const stored = Number(localStorage.getItem('sidebarWidth'))
+    if (stored >= SIDEBAR_MIN_WIDTH && stored <= SIDEBAR_MAX_WIDTH) return stored
+  } catch {
+    // Private browsing / blocked storage — fall back to the default.
+  }
+  return SIDEBAR_DEFAULT_WIDTH
+}
 
 export default function App() {
   const { theme, toggleTheme } = useTheme()
@@ -25,9 +39,55 @@ export default function App() {
   const [drawnAreaKm2, setDrawnAreaKm2] = useState(null)
   const [clearSignal, setClearSignal] = useState(0)
 
+  const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
+  const resizingRef = useRef(false)
+
+  const handleResizerPointerDown = useCallback((event) => {
+    event.preventDefault()
+    resizingRef.current = true
+    document.body.classList.add('is-resizing-sidebar')
+  }, [])
+
+  useEffect(() => {
+    function handlePointerMove(event) {
+      if (!resizingRef.current) return
+      const next = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, event.clientX))
+      setSidebarWidth(next)
+    }
+
+    function stopResizing() {
+      if (!resizingRef.current) return
+      resizingRef.current = false
+      document.body.classList.remove('is-resizing-sidebar')
+      setSidebarWidth((current) => {
+        try {
+          localStorage.setItem('sidebarWidth', String(current))
+        } catch {
+          // Not essential — the width just won't persist across reloads.
+        }
+        return current
+      })
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', stopResizing)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', stopResizing)
+    }
+  }, [])
+
+  // Switching modes starts a new analysis — clear the previous one's
+  // results/drawing so the map and results panel don't show stale state
+  // while the user sets up the next input (previously the only way to get
+  // a clean slate was reloading the whole page).
   const handleModeChange = useCallback((newMode) => {
     setMode(newMode)
     setError(null)
+    setResult(null)
+    setDrawnPolygon(null)
+    setDrawnAreaKm2(null)
+    setClearSignal((n) => n + 1)
   }, [])
 
   const handleAreaDrawn = useCallback((latlngs) => {
@@ -91,7 +151,7 @@ export default function App() {
       <ErrorBanner message={error} onDismiss={() => setError(null)} />
 
       <main className="app-main">
-        <div className="sidebar">
+        <div className="sidebar" style={{ '--sidebar-width': `${sidebarWidth}px` }}>
           <ModeToggle mode={mode} onChange={handleModeChange} disabled={busy} />
 
           {mode === 'upload' ? (
@@ -108,6 +168,14 @@ export default function App() {
 
           <ResultsPanel result={result} />
         </div>
+
+        <div
+          className="sidebar-resizer"
+          onPointerDown={handleResizerPointerDown}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+        />
 
         <div className="map-container">
           <MapView
