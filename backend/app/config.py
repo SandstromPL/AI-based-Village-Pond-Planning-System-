@@ -56,15 +56,6 @@ class Settings(BaseSettings):
     rainfall_history_end_year: int | None = Field(default=None, ge=1900)
     rainfall_request_timeout_s: float = Field(default=10.0, gt=0, le=60)
 
-    # ── Planning-level runoff and pond assumptions ──────────────────────────
-    # The default coefficient represents mixed agricultural/semi-pervious land.
-    # It remains explicit until a land-cover provider is integrated.
-    runoff_coefficient_default: float = Field(default=0.35, ge=0, le=1)
-    pond_retention_factor: float = Field(default=0.80, gt=0, le=1)
-    pond_default_depth_m: float = Field(default=3.0, gt=0)
-    pond_steep_slope_threshold_deg: float = Field(default=5.0, gt=0)
-    pond_steep_slope_depth_m: float = Field(default=2.0, gt=0)
-
     # [EXTERNAL_API_PLACEHOLDER: NASA POWER]
     nasa_power_base_url: str = "https://power.larc.nasa.gov/api/temporal/daily/point"
 
