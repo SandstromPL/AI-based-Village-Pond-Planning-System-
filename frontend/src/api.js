@@ -2,11 +2,15 @@ const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/ap
   /\/+$/,
   '',
 )
-// The backend bounds its own worst case (elevation-fetch deadline + rainfall
-// timeout + compute) to roughly 70-75s — this stays comfortably above that
-// so the frontend doesn't give up on a request the backend would have
-// finished. If this ever fires, the backend really did exceed its own budget.
-const DEFAULT_TIMEOUT_MS = 120_000
+// The backend's real-world worst case, measured from production logs, runs
+// closer to ~90-100s than the old ~70-75s estimate: elevation's 45s budget
+// can overshoot to ~65s (an in-flight request already launched before its
+// deadline can't be aborted mid-socket-call), plus land-use's now-bounded
+// ~25s (overlapped with elevation, not purely additive) plus rainfall's
+// ~10s. This stays comfortably above that so the frontend doesn't give up
+// on a request the backend would have finished. If this ever fires, the
+// backend really did exceed its own budget.
+const DEFAULT_TIMEOUT_MS = 155_000
 
 export class ApiError extends Error {
   constructor(status, detail, analysisId) {

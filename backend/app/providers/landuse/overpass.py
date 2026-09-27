@@ -75,12 +75,22 @@ def _fetch_from_overpass(bbox: BoundingBox) -> ExclusionLayers:
         timeout=int(settings.overpass_request_timeout_s), bbox=overpass_bbox
     )
 
+    # Hard wall-clock cap on the whole call, regardless of retry count —
+    # without it, two independent full-timeout attempts is an open-ended
+    # ~40s worst case that can stack with the elevation fetch's own worst
+    # case and approach the frontend's request timeout.
+    deadline = time.monotonic() + settings.overpass_total_budget_s
+
     for attempt in range(settings.overpass_max_retries + 1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logger.warning("Overpass deadline exceeded before attempt %d.", attempt + 1)
+            break
         try:
             response = httpx.post(
                 settings.overpass_url,
                 data={"data": query},
-                timeout=settings.overpass_request_timeout_s,
+                timeout=min(settings.overpass_request_timeout_s, remaining),
             )
             response.raise_for_status()
             return _parse_overpass_response(response.json())
@@ -116,8 +126,8 @@ def _fetch_from_overpass(bbox: BoundingBox) -> ExclusionLayers:
             logger.warning("Overpass returned unusable data: %s", exc)
             break
 
-        if attempt < settings.overpass_max_retries:
-            time.sleep(0.5 * (attempt + 1))
+        if attempt < settings.overpass_max_retries and time.monotonic() < deadline:
+            time.sleep(min(0.5 * (attempt + 1), max(0, deadline - time.monotonic())))
 
     logger.error("Overpass land-use query failed after retries; constraint filter will be skipped.")
     return ExclusionLayers(

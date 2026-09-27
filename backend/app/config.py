@@ -114,6 +114,12 @@ class Settings(BaseSettings):
     overpass_url: str = "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
     overpass_request_timeout_s: float = Field(default=20.0, gt=0, le=60)
     overpass_max_retries: int = Field(default=1, ge=0, le=3)
+    # Hard wall-clock cap on the whole _fetch_from_overpass call, regardless
+    # of retry count — mirrors elevation_total_budget_s. Without this, two
+    # independent 20s attempts is an open-ended ~40s worst case; a real
+    # production log showed this stacking with elevation's own worst case
+    # to approach the frontend's request timeout.
+    overpass_total_budget_s: float = Field(default=25.0, gt=0, le=60)
     # Buffer distances (metres) — from the original spatial-constraint design.
     landuse_building_buffer_m: float = Field(default=100.0, ge=0)
     landuse_road_buffer_m: float = Field(default=50.0, ge=0)

@@ -16,6 +16,7 @@ Two public entry points share one pipeline tail:
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
 import logging
 import time
 import uuid
@@ -40,11 +41,17 @@ from app.models.terrain import TerrainModel
 from app.services.candidate_service import generate_candidates
 from app.services.catchment_service import compute_flow_data
 from app.services.kml_service import parse_contour_file
+from app.services.landuse_service import build_exclusion_union
 from app.services.pond_service import estimate_pond_size
 from app.services.rainfall_service import get_historical_rainfall
 from app.services.runoff_service import estimate_runoff
-from app.services.terrain_service import build_terrain_model, build_terrain_model_from_area
+from app.services.terrain_service import (
+    AreaTooLargeError,
+    build_terrain_model,
+    build_terrain_model_from_area,
+)
 from app.utils import geojson as gj
+from app.utils.geo import approx_bbox_area_km2, bbox_from_polygon, utm_epsg_from_lonlat
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +83,34 @@ def run_area_analysis(
     """Run the full pond planning analysis pipeline for a user-drawn map area."""
     logger.info("=== Starting selected-area analysis (%d polygon points) ===", len(polygon))
 
+    # Land-use (Overpass) only needs the drawn polygon's bbox + projected CRS —
+    # both pure, sub-millisecond, local computations — not the terrain/DEM
+    # that comes later. Kick it off now, concurrently with the elevation
+    # fetch inside build_terrain_model_from_area, instead of waiting for
+    # candidate generation: a real production log showed elevation (~65s
+    # incl. unavoidable overshoot) + land-use (~20-40s) + rainfall (~10s)
+    # stacking sequentially to ~117s, right at the frontend's own timeout.
+    # Uses the raw drawn-polygon bbox, not the padded terrain bbox computed
+    # later — candidates in that padding margin are already rejected by the
+    # selection_polygon filter below, so land-use data for that margin was
+    # always out of scope anyway.
+    early_bbox = bbox_from_polygon(polygon)
+    # Same size check build_terrain_model_from_area performs internally —
+    # duplicated here so an oversized/invalid polygon is rejected before
+    # firing a network request that would only ever be thrown away.
+    early_area_km2 = approx_bbox_area_km2(early_bbox)
+    if early_area_km2 > settings.selected_area_max_km2:
+        raise AreaTooLargeError(
+            f"Selected area (~{early_area_km2:.1f} km²) exceeds the maximum allowed "
+            f"({settings.selected_area_max_km2:.1f} km²). Please draw a smaller area."
+        )
+    early_projected_crs = utm_epsg_from_lonlat(early_bbox.center_lon, early_bbox.center_lat)
+    exclusion_executor = ThreadPoolExecutor(max_workers=1)
+    exclusion_union_future = exclusion_executor.submit(
+        build_exclusion_union, early_bbox, early_projected_crs
+    )
+    exclusion_executor.shutdown(wait=False)  # in-flight task still runs; just stops new submissions
+
     terrain, area_warnings = build_terrain_model_from_area(polygon, resolution_m)
 
     input_metadata = InputMetadata(
@@ -91,6 +126,7 @@ def run_area_analysis(
         contour_data=None,
         warnings=list(area_warnings),
         selection_polygon=selection_polygon,
+        exclusion_union_future=exclusion_union_future,
     )
 
 
@@ -142,6 +178,7 @@ def _run_from_terrain(
     contour_data: Optional[NormalizedContourData],
     warnings: List[str],
     selection_polygon: Optional[Polygon] = None,
+    exclusion_union_future: Optional["Future"] = None,
 ) -> AnalysisResult:
     """Shared pipeline tail: flow → candidates → rainfall → runoff → pond → geojson."""
     analysis_id = str(uuid.uuid4())
@@ -153,7 +190,11 @@ def _run_from_terrain(
 
     logger.info("[analysis %s] Generating and evaluating pond candidates...", analysis_id)
     candidates, constraint_warnings = generate_candidates(
-        terrain, flow_data, input_metadata.bbox, selection_polygon=selection_polygon
+        terrain,
+        flow_data,
+        input_metadata.bbox,
+        selection_polygon=selection_polygon,
+        exclusion_union_future=exclusion_union_future,
     )
     warnings.extend(constraint_warnings)
 

@@ -8,6 +8,7 @@ outside the box the user drew on the map. `selection_polygon` restricts
 area-select path (None for contour uploads, which have no narrower
 user-drawn shape to restrict to)."""
 
+from concurrent.futures import Future
 from unittest.mock import patch
 
 import numpy as np
@@ -126,3 +127,44 @@ def test_no_selection_polygon_means_no_such_rejection(_mock_exclusion):
     candidates, _warnings = generate_candidates(terrain, flow_data, _BBOX, selection_polygon=None)
 
     assert all(c.status != CandidateStatus.REJECTED_OUTSIDE_SELECTION for c in candidates)
+
+
+@patch("app.services.candidate_service.build_exclusion_union")
+def test_uses_pre_resolved_exclusion_future_instead_of_calling_build_exclusion_union(
+    mock_build_exclusion,
+):
+    """The selected-area path launches build_exclusion_union in a background
+    thread at the same time as the elevation fetch (so it overlaps instead
+    of stacking after it) and passes the resulting Future through instead
+    of calling build_exclusion_union again here."""
+    terrain, flow_data = _build_terrain_with_single_pit()
+
+    future: Future = Future()
+    future.set_result((None, ["some warning"]))
+
+    candidates, warnings = generate_candidates(
+        terrain, flow_data, _BBOX, exclusion_union_future=future
+    )
+
+    assert warnings == ["some warning"]
+    assert candidates  # pipeline still ran to completion
+    mock_build_exclusion.assert_not_called()
+
+
+@patch("app.services.candidate_service.build_exclusion_union")
+def test_exclusion_future_exception_degrades_gracefully(mock_build_exclusion):
+    """A background-thread exception must never surface as a hard failure —
+    it degrades exactly like an unreachable Overpass does when fetched
+    synchronously (skip the filter, add a warning)."""
+    terrain, flow_data = _build_terrain_with_single_pit()
+
+    future: Future = Future()
+    future.set_exception(RuntimeError("background fetch blew up"))
+
+    candidates, warnings = generate_candidates(
+        terrain, flow_data, _BBOX, exclusion_union_future=future
+    )
+
+    assert candidates  # still produced a result, didn't raise
+    assert any("skipped" in w.lower() for w in warnings)
+    mock_build_exclusion.assert_not_called()

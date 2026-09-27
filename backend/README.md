@@ -177,7 +177,17 @@ even after the network recovered. Now a later request simply retries it.
 | `LANDUSE_CONSTRAINT_ENABLED` | `true` | Reject candidates that fall on/near an existing building, road, waterway, water body, or power line |
 | `OVERPASS_URL` | a public Overpass mirror | OSM data source for exclusion geometries |
 | `OVERPASS_REQUEST_TIMEOUT_S` / `OVERPASS_MAX_RETRIES` | `20` / `1` | Bounded like every other external call — failure skips the filter (plus a warning), never blocks the analysis |
+| `OVERPASS_TOTAL_BUDGET_S` | `25` | Hard wall-clock cap on the whole Overpass fetch regardless of retry count — mirrors `ELEVATION_TOTAL_BUDGET_S`. Without it, two full-timeout attempts is an open-ended ~40s worst case that can stack with elevation's own worst case and approach the frontend's request timeout |
 | `LANDUSE_BUILDING_BUFFER_M` / `_ROAD_` / `_RIVER_` / `_POWERLINE_` | `100` / `50` / `30` / `75` | Buffer distance (metres) around each feature type |
+
+For `/analyzeArea`, the Overpass land-use fetch is launched in a background
+thread at the very start of the request — at the same time as the elevation
+fetch, not after candidate generation — since it only needs the drawn
+polygon's bbox, not the terrain. This overlaps two independent network calls
+that used to run strictly sequentially; a failure in the background fetch
+degrades to the same "filter skipped, plus a warning" behavior as before,
+never a hard failure. The contour-upload path is unaffected (it never
+fetches elevation over the network, so there's nothing to overlap).
 
 ---
 

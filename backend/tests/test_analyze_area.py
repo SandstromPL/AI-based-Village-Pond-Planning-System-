@@ -1,5 +1,6 @@
 """Integration test for the map-selected-area analysis endpoint."""
 
+import time
 from unittest.mock import patch
 
 import httpx
@@ -112,6 +113,29 @@ def test_analyze_area_returns_full_pipeline_output(mock_post, mock_get):
     assert data["geojson_layers"]["recommended_location"]["properties"][
         "expected_annual_collection_m3"
     ] is not None
+
+
+def _slow_combined_post_response(url, json=None, data=None, timeout=None, **kwargs):
+    # Land-use is now fetched in a background thread launched at the same
+    # time as the elevation fetch (overlapping, not sequential) — a slow
+    # but well-within-budget Overpass response must not break correctness
+    # or race with the rest of the pipeline resolving it via a Future.
+    if json is None and data is not None:
+        time.sleep(0.2)
+    return _combined_post_response(url, json=json, data=data, timeout=timeout, **kwargs)
+
+
+@patch("app.services.rainfall_service.httpx.get")
+@patch("app.providers.elevation.open_elevation.httpx.post")
+def test_analyze_area_succeeds_with_slow_but_bounded_landuse_fetch(mock_post, mock_get):
+    mock_post.side_effect = _slow_combined_post_response
+    mock_get.side_effect = _rainfall_response
+
+    resp = client.post("/api/v1/analyzeArea", json={"polygon": _POLYGON})
+
+    assert resp.status_code == 200, resp.text[:500]
+    data = resp.json()
+    assert data["recommended"] is not None, f"No recommended pond found: {data['warnings']}"
 
 
 @patch("app.providers.elevation.open_elevation.httpx.post")

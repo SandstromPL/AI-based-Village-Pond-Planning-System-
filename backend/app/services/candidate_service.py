@@ -20,6 +20,7 @@ Strategy:
 
 from __future__ import annotations
 
+from concurrent.futures import Future
 import logging
 from typing import List, Optional, Tuple
 
@@ -45,6 +46,7 @@ def generate_candidates(
     flow_data: FlowData,
     bbox: BoundingBox,
     selection_polygon: Optional[Polygon] = None,
+    exclusion_union_future: Optional["Future"] = None,
 ) -> Tuple[List[PondCandidate], List[str]]:
     """
     Generate and evaluate all pond candidates.
@@ -53,7 +55,8 @@ def generate_candidates(
         terrain:   TerrainModel with dem, filled_dem, slope.
         flow_data: FlowData with flow_direction and flow_accumulation.
         bbox:      WGS84 bounding box of the analysis area, used to fetch
-                   land-use exclusion geometries (buildings/roads/rivers).
+                   land-use exclusion geometries (buildings/roads/rivers) —
+                   ignored if exclusion_union_future is supplied.
         selection_polygon: The user's drawn polygon, already projected into
                    terrain.projected_crs (selected-area analysis only). The
                    DEM grid is padded beyond this polygon to avoid flow-
@@ -62,6 +65,13 @@ def generate_candidates(
                    about — this rejects those. None (contour-upload path)
                    skips this filter: there's no user-drawn shape narrower
                    than the contour extent to restrict to.
+        exclusion_union_future: A `build_exclusion_union(...)` call already
+                   launched in a background thread (selected-area analysis
+                   only), started at the same time as the elevation fetch
+                   since land-use only needs the bbox, not the terrain. When
+                   supplied, its result is used instead of calling
+                   build_exclusion_union again here. None (contour-upload
+                   path) calls it synchronously as before.
 
     Returns:
         (candidates, warnings) — candidates scored and ranked; warnings
@@ -71,7 +81,16 @@ def generate_candidates(
 
     # build_exclusion_union already no-ops (returns None, []) when the
     # filter is disabled in settings or Overpass can't be reached.
-    exclusion_union, constraint_warnings = build_exclusion_union(bbox, terrain.projected_crs)
+    if exclusion_union_future is not None:
+        try:
+            exclusion_union, constraint_warnings = exclusion_union_future.result()
+        except Exception as exc:
+            logger.warning("Background land-use fetch failed unexpectedly: %s", exc)
+            exclusion_union, constraint_warnings = None, [
+                "Land-use constraint checking was skipped: background fetch failed unexpectedly."
+            ]
+    else:
+        exclusion_union, constraint_warnings = build_exclusion_union(bbox, terrain.projected_crs)
 
     # ── 1. Depression seeds ───────────────────────────────────────────────
     depression_seeds = _find_depression_seeds(terrain)

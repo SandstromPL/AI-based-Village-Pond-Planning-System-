@@ -1,6 +1,7 @@
 """Unit tests for the Overpass land-use provider and the constraint service
 that projects/buffers/unions its geometries for candidate filtering."""
 
+import time
 from unittest.mock import Mock, patch
 
 import httpx
@@ -101,6 +102,35 @@ def test_fetch_exclusion_geometries_does_not_retry_connect_errors(mock_post):
 
     assert layers.status == "unavailable"
     assert mock_post.call_count == 1  # overpass_max_retries allows 2, but must stop after 1
+
+
+@patch("app.providers.landuse.overpass.time.sleep", return_value=None)
+@patch("app.providers.landuse.overpass.httpx.post")
+def test_fetch_exclusion_geometries_respects_total_time_budget(mock_post, _mock_sleep):
+    """A slow/failing network must not let Overpass's retries run open-ended
+    — a real production log showed this (~40s worst case) stacking with the
+    elevation fetch's own worst case to approach the frontend's own request
+    timeout. The deadline should cut retries short well inside the budget."""
+
+    def slow_fail(*args, **kwargs):
+        time.sleep(0.05)
+        raise httpx.TimeoutException("timed out")
+
+    mock_post.side_effect = slow_fail
+
+    original_budget = settings.overpass_total_budget_s
+    settings.overpass_total_budget_s = 0.15
+    try:
+        start = time.monotonic()
+        layers = fetch_exclusion_geometries(_BBOX)
+        elapsed = time.monotonic() - start
+
+        assert layers.status == "unavailable"
+        # Without the deadline this would take up to overpass_max_retries+1
+        # full-timeout attempts (tens of seconds); it must stay well short.
+        assert elapsed < 2.0
+    finally:
+        settings.overpass_total_budget_s = original_budget
 
 
 @patch("app.providers.landuse.overpass.httpx.post")
