@@ -48,13 +48,27 @@ def test_fetch_elevations_caches_repeated_points(mock_post):
 
 
 @patch("app.providers.elevation.open_elevation.time.sleep", return_value=None)
+@patch("app.providers.elevation.open_elevation.httpx.get")
 @patch("app.providers.elevation.open_elevation.httpx.post")
-def test_fetch_elevations_returns_none_after_persistent_failure(mock_post, _mock_sleep):
+def test_fetch_elevations_returns_none_after_both_providers_fail(mock_post, mock_get, _mock_sleep):
     mock_post.side_effect = httpx.TimeoutException("timed out")
+    mock_get.side_effect = httpx.TimeoutException("timed out")
 
     result = fetch_elevations([(21.26, 81.28)])
 
     assert result == [None]
+
+
+@patch("app.providers.elevation.open_elevation.httpx.get")
+@patch("app.providers.elevation.open_elevation.httpx.post")
+def test_fetch_elevations_falls_back_to_opentopodata_on_total_failure(mock_post, mock_get):
+    mock_post.side_effect = httpx.TimeoutException("timed out")
+    mock_get.return_value = _mock_response([250.0])
+
+    result = fetch_elevations([(21.26, 81.28)])
+
+    assert result == [250.0]
+    assert mock_get.call_count == 1
 
 
 @patch("app.providers.elevation.open_elevation.httpx.post")

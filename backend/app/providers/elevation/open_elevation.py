@@ -5,6 +5,12 @@ contour file to derive elevation from. Point elevations are fetched in
 batches and cached; a batch that fails after retries yields ``None`` for its
 points rather than raising, so the caller can decide how to handle partial
 coverage (see ``terrain_service.build_terrain_model_from_area``).
+
+Points Open-Elevation could not return (including a network/DNS failure
+that fails an entire batch) are retried against OpenTopoData as a second,
+independent provider — different domain, different infrastructure — before
+giving up on those points. This matters in practice: a network that reaches
+one public API can still fail to resolve/reach another.
 """
 
 from __future__ import annotations
@@ -90,6 +96,27 @@ def clear_elevation_cache() -> None:
 
 
 def _fetch_batch_from_api(batch: List[Tuple[float, float]]) -> List[Optional[float]]:
+    """Fetch a batch from Open-Elevation, falling back to OpenTopoData for
+    any points it could not provide (including a total batch failure)."""
+    result = _fetch_from_open_elevation(batch)
+
+    if settings.elevation_fallback_enabled:
+        missing_indices = [i for i, v in enumerate(result) if v is None]
+        if missing_indices:
+            logger.warning(
+                "Falling back to OpenTopoData for %d point(s) Open-Elevation could not provide.",
+                len(missing_indices),
+            )
+            fallback_points = [batch[i] for i in missing_indices]
+            fallback_values = _fetch_from_opentopodata(fallback_points)
+            for local_i, value in zip(missing_indices, fallback_values):
+                if value is not None:
+                    result[local_i] = value
+
+    return result
+
+
+def _fetch_from_open_elevation(batch: List[Tuple[float, float]]) -> List[Optional[float]]:
     payload = {
         "locations": [
             {"latitude": lat, "longitude": lon} for lat, lon in batch
@@ -105,7 +132,7 @@ def _fetch_batch_from_api(batch: List[Tuple[float, float]]) -> List[Optional[flo
             )
             response.raise_for_status()
             data = response.json()
-            return _parse_elevation_response(data, expected_count=len(batch))
+            return _parse_open_elevation_response(data, expected_count=len(batch))
         except httpx.TimeoutException:
             logger.warning(
                 "Open-Elevation request timed out (attempt %d/%d).",
@@ -137,10 +164,66 @@ def _fetch_batch_from_api(batch: List[Tuple[float, float]]) -> List[Optional[flo
     return [None] * len(batch)
 
 
-def _parse_elevation_response(data: dict, expected_count: int) -> List[Optional[float]]:
+def _parse_open_elevation_response(data: dict, expected_count: int) -> List[Optional[float]]:
     results = data.get("results")
     if not isinstance(results, list) or len(results) != expected_count:
         raise ValueError("Open-Elevation response 'results' missing or misaligned")
+
+    elevations: List[Optional[float]] = []
+    for item in results:
+        elevation = item.get("elevation") if isinstance(item, dict) else None
+        elevations.append(float(elevation) if elevation is not None else None)
+    return elevations
+
+
+def _fetch_from_opentopodata(batch: List[Tuple[float, float]]) -> List[Optional[float]]:
+    locations = "|".join(f"{lat},{lon}" for lat, lon in batch)
+
+    for attempt in range(settings.elevation_max_retries + 1):
+        try:
+            response = httpx.get(
+                settings.opentopodata_url,
+                params={"locations": locations},
+                timeout=settings.elevation_request_timeout_s,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return _parse_opentopodata_response(data, expected_count=len(batch))
+        except httpx.TimeoutException:
+            logger.warning(
+                "OpenTopoData request timed out (attempt %d/%d).",
+                attempt + 1,
+                settings.elevation_max_retries + 1,
+            )
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "OpenTopoData request failed with HTTP %s (attempt %d/%d).",
+                exc.response.status_code,
+                attempt + 1,
+                settings.elevation_max_retries + 1,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "OpenTopoData request failed: %s (attempt %d/%d).",
+                exc,
+                attempt + 1,
+                settings.elevation_max_retries + 1,
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            logger.warning("OpenTopoData returned unusable data: %s", exc)
+            break
+
+        if attempt < settings.elevation_max_retries:
+            time.sleep(0.5 * (attempt + 1))
+
+    logger.error("OpenTopoData fallback for %d point(s) failed after retries.", len(batch))
+    return [None] * len(batch)
+
+
+def _parse_opentopodata_response(data: dict, expected_count: int) -> List[Optional[float]]:
+    results = data.get("results")
+    if not isinstance(results, list) or len(results) != expected_count:
+        raise ValueError("OpenTopoData response 'results' missing or misaligned")
 
     elevations: List[Optional[float]] = []
     for item in results:

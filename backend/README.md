@@ -151,7 +151,9 @@ All parameters are in `.env` (see `.env.example`):
 |---|---|---|
 | `OPEN_ELEVATION_URL` | Open-Elevation public API | Elevation lookup for the drawn area |
 | `ELEVATION_BATCH_SIZE` | `50` | Points per Open-Elevation request |
-| `ELEVATION_MAX_RETRIES` | `2` | Retries per batch before giving up |
+| `ELEVATION_MAX_RETRIES` | `1` | Retries per batch before giving up |
+| `ELEVATION_MAX_CONCURRENT_REQUESTS` | `5` | Batches fetched in parallel (bounds wall-clock time) |
+| `ELEVATION_FALLBACK_ENABLED` / `OPENTOPODATA_URL` | `true` / OpenTopoData public API | Fallback provider for any points Open-Elevation can't return — including its domain being unreachable from a given network while others are fine |
 | `SELECTED_AREA_MAX_KM2` | `25` | Reject polygons larger than this |
 | `SELECTED_AREA_MAX_GRID_POINTS` | `2500` | Auto-coarsen DEM resolution above this many cells |
 
@@ -163,6 +165,7 @@ All parameters are in `.env` (see `.env.example`):
 |---|---|---|
 | Open-Meteo | Historical rainfall | **Implemented** (`app/services/rainfall_service.py`) |
 | Open-Elevation | Elevation for selected-area analysis | **Implemented** (`app/providers/elevation/open_elevation.py`) |
+| OpenTopoData | Elevation fallback (points Open-Elevation couldn't return) | **Implemented** (same file) |
 | OpenZenith | Elevation validation (contour path) | Not yet implemented |
 | NASA POWER / IMD | Rainfall alternatives | Not yet implemented |
 

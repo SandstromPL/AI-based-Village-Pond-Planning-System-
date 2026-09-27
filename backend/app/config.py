@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     elevation_max_retries: int = Field(default=1, ge=0, le=5)
     elevation_max_concurrent_requests: int = Field(default=5, ge=1, le=20)
 
+    # Fallback provider, tried only for points Open-Elevation could not
+    # return (including total failure — e.g. its domain being unreachable
+    # from a given network while other external APIs are fine).
+    elevation_fallback_enabled: bool = True
+    opentopodata_url: str = "https://api.opentopodata.org/v1/srtm90m"
+
     # ── Map-selected-area analysis limits ────────────────────────────────────
     # Bounds compute/API cost for a user-drawn polygon rather than a KML upload.
     selected_area_max_km2: float = Field(default=25.0, gt=0)
