@@ -278,8 +278,11 @@ def _build_geojson_layers(
             },
         )
     else:
+        # RFC 7946 §3.2: an "unlocated" Feature's geometry is JSON null, not
+        # a Point with an empty coordinates array (which is not a valid
+        # position and will break a map library trying to render it).
         recommended_feature = gj.feature(
-            geometry={"type": "Point", "coordinates": []},
+            geometry=None,
             properties={"message": "No valid candidate found"},
         )
 

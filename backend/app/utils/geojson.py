@@ -9,8 +9,14 @@ import numpy as np
 from shapely.geometry import mapping
 
 
-def feature(geometry: Dict[str, Any], properties: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Wrap a GeoJSON geometry in a Feature object."""
+def feature(
+    geometry: Optional[Dict[str, Any]], properties: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Wrap a GeoJSON geometry in a Feature object.
+
+    geometry may be None for an "unlocated" Feature (RFC 7946 §3.2) —
+    e.g. when no recommended pond candidate exists yet.
+    """
     return {
         "type": "Feature",
         "geometry": geometry,
