@@ -71,6 +71,27 @@ def test_fetch_elevations_caches_repeated_points(mock_post):
     assert mock_post.call_count == 1
 
 
+@patch("app.providers.elevation.open_elevation.time.sleep", return_value=None)
+@patch("app.providers.elevation.open_elevation.httpx.get")
+@patch("app.providers.elevation.open_elevation.httpx.post")
+def test_fetch_elevations_does_not_cache_failures(mock_post, mock_get, _mock_sleep):
+    """A point that fails every provider tier must not be cached — a real
+    production incident showed the exact same failed points being served
+    from cache on every later request, forever, even after the network
+    had recovered. Only a real (non-None) value should be cached."""
+    point = (21.26, 81.28)
+
+    mock_post.side_effect = httpx.TimeoutException("timed out")
+    mock_get.side_effect = httpx.TimeoutException("timed out")
+    first = fetch_elevations([point])
+    assert first == [None]
+
+    mock_post.side_effect = None
+    mock_post.return_value = _openzenith_response([point], [150.0])
+    second = fetch_elevations([point])
+    assert second == [150.0]  # retried fresh, not served a cached None
+
+
 @patch("app.providers.elevation.open_elevation.httpx.post")
 def test_fetch_elevations_falls_back_to_open_elevation_when_openzenith_fails(mock_post):
     point = (21.26, 81.28)

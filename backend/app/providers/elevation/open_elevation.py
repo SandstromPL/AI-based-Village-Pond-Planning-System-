@@ -89,8 +89,16 @@ def fetch_elevations(points: List[Tuple[float, float]]) -> List[Optional[float]]
         fetched = _fetch_batch_from_api(missing_points, deadline)
         for local_i, value in zip(missing_indices, fetched):
             cached[local_i] = value
-            lat, lon = rounded[local_i]
-            _point_cache_set(lat, lon, value)
+            if value is not None:
+                # Only cache real values. A point that failed every provider
+                # tier is often just a transient network episode (see a
+                # real production incident: the same failed points were
+                # served from cache on every later request, forever, even
+                # after the network recovered) — leaving it uncached lets
+                # the next call retry it fresh instead of repeating the
+                # same failure forever.
+                lat, lon = rounded[local_i]
+                _point_cache_set(lat, lon, value)
 
     batches_needing_fetch = [
         i for i, cached in enumerate(cached_batches) if _MISS in cached
