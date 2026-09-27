@@ -1,21 +1,10 @@
-"""
-Pond Sizing Service — Phase 2 Placeholder
-==========================================
-# [EXTERNAL_API_PLACEHOLDER: Pond sizing needs runoff volume from rainfall API]
-
-Phase 3 will implement:
-    Given annual runoff volume → estimate pond depth, surface area, storage.
-
-    Simple trapezoidal pond model:
-        storage_volume = runoff_volume × retention_factor
-        surface_area = storage_volume / avg_depth
-        depth = configurable (typical village pond: 2–4 m)
-"""
+"""Planning-level pond storage and dimension estimation."""
 
 from __future__ import annotations
 
 import logging
 
+from app.config import settings
 from app.models.rainfall import PondSizingResult, RunoffResult
 
 logger = logging.getLogger(__name__)
@@ -25,40 +14,40 @@ def estimate_pond_size(
     runoff: RunoffResult,
     terrain_slope_deg: float | None = None,
 ) -> PondSizingResult:
+    """Convert estimated annual runoff into an indicative pond storage design.
+
+    Storage is the configured retention fraction of annual runoff. The surface
+    area is a simple storage/depth calculation and must be field-validated
+    before construction.
     """
-    Estimate planning-level pond dimensions from runoff volume.
-
-    # [EXTERNAL_API_PLACEHOLDER: needs runoff volume from rainfall API]
-
-    Phase 3 implementation:
-        if runoff.annual_runoff_m3 is None:
-            return PondSizingResult(status="placeholder", ...)
-        retention_factor = 0.8  # retain 80% of annual runoff
-        target_storage = runoff.annual_runoff_m3 * retention_factor
-        depth = 3.0  # metres (typical village check dam / percolation pond)
-        # Account for slope: shallower depth on steeper terrain
-        if terrain_slope_deg and terrain_slope_deg > 5:
-            depth = 2.0
-        surface_area_m2 = target_storage / depth
+    if runoff.status != "success" or runoff.annual_runoff_m3 is None:
         return PondSizingResult(
-            status="success",
-            recommended_depth_m=depth,
-            estimated_surface_area_m2=surface_area_m2,
-            estimated_storage_m3=target_storage,
+            message="Pond storage is unavailable because annual runoff could not be estimated."
         )
 
-    Returns:
-        PondSizingResult with placeholder status.
-    """
-    logger.warning("Pond sizing is a placeholder — runoff volume not yet available.")
+    depth_m = settings.pond_default_depth_m
+    if (
+        terrain_slope_deg is not None
+        and terrain_slope_deg > settings.pond_steep_slope_threshold_deg
+    ):
+        depth_m = settings.pond_steep_slope_depth_m
 
+    storage_m3 = runoff.annual_runoff_m3 * settings.pond_retention_factor
+    surface_area_m2 = storage_m3 / depth_m
+
+    logger.info(
+        "Estimated pond storage: %.1f m³ at %.1f m depth (surface area %.1f m²).",
+        storage_m3,
+        depth_m,
+        surface_area_m2,
+    )
     return PondSizingResult(
-        status="placeholder",
-        recommended_depth_m=None,
-        estimated_surface_area_m2=None,
-        estimated_storage_m3=None,
+        status="success",
+        recommended_depth_m=round(depth_m, 2),
+        estimated_surface_area_m2=round(surface_area_m2, 2),
+        estimated_storage_m3=round(storage_m3, 2),
         message=(
-            "EXTERNAL_API_PLACEHOLDER: Pond sizing requires runoff volume "
-            "which depends on rainfall data. Will be implemented in Phase 3."
+            "Planning-level storage estimate using the configured retention factor "
+            f"({settings.pond_retention_factor:.0%}) and indicative depth."
         ),
     )
