@@ -87,6 +87,32 @@ def test_fetch_elevations_falls_back_to_open_elevation_when_openzenith_fails(moc
     assert result == [123.4]
 
 
+@patch("app.providers.elevation.open_elevation.httpx.post")
+def test_fetch_elevations_does_not_retry_connect_errors(mock_post):
+    """A DNS/connection failure should not be retried — a same-second
+    retry essentially never succeeds if DNS itself is broken, and (per a
+    real production incident) retrying anyway wasted most of the total
+    time budget on one provider, leaving the fallback chain almost no
+    time to actually rescue those points."""
+    point = (21.26, 81.28)
+    openzenith_call_count = 0
+
+    def dispatch(*args, **kwargs):
+        nonlocal openzenith_call_count
+        if _is_openzenith_call(args, kwargs):
+            openzenith_call_count += 1
+            raise httpx.ConnectError("Temporary failure in name resolution")
+        return _plain_response([123.4])
+
+    mock_post.side_effect = dispatch
+
+    result = fetch_elevations([point])
+
+    assert result == [123.4]  # still recovered via the Open-Elevation fallback
+    # elevation_max_retries allows 2 attempts, but a ConnectError must stop after 1.
+    assert openzenith_call_count == 1
+
+
 @patch("app.providers.elevation.open_elevation.httpx.get")
 @patch("app.providers.elevation.open_elevation.httpx.post")
 def test_fetch_elevations_falls_back_to_opentopodata_when_post_based_providers_fail(

@@ -231,6 +231,14 @@ def _fetch_from_openzenith(batch: List[Tuple[float, float]], deadline: float) ->
                 attempt + 1,
                 settings.openzenith_max_retries + 1,
             )
+        except httpx.ConnectError as exc:
+            logger.warning(
+                "OpenZenith connection failed (DNS/network — not retrying): %s (attempt %d/%d).",
+                exc,
+                attempt + 1,
+                settings.openzenith_max_retries + 1,
+            )
+            break  # a same-second retry essentially never fixes a broken DNS/connection
         except httpx.HTTPError as exc:
             logger.warning(
                 "OpenZenith request failed: %s (attempt %d/%d).",
@@ -311,6 +319,14 @@ def _fetch_from_open_elevation(batch: List[Tuple[float, float]], deadline: float
                 attempt + 1,
                 settings.elevation_max_retries + 1,
             )
+        except httpx.ConnectError as exc:
+            logger.warning(
+                "Open-Elevation connection failed (DNS/network — not retrying): %s (attempt %d/%d).",
+                exc,
+                attempt + 1,
+                settings.elevation_max_retries + 1,
+            )
+            break  # a same-second retry essentially never fixes a broken DNS/connection
         except httpx.HTTPError as exc:
             logger.warning(
                 "Open-Elevation request failed: %s (attempt %d/%d).",
@@ -371,6 +387,14 @@ def _fetch_from_opentopodata(batch: List[Tuple[float, float]], deadline: float) 
                 attempt + 1,
                 settings.elevation_max_retries + 1,
             )
+        except httpx.ConnectError as exc:
+            logger.warning(
+                "OpenTopoData connection failed (DNS/network — not retrying): %s (attempt %d/%d).",
+                exc,
+                attempt + 1,
+                settings.elevation_max_retries + 1,
+            )
+            break  # a same-second retry essentially never fixes a broken DNS/connection
         except httpx.HTTPError as exc:
             logger.warning(
                 "OpenTopoData request failed: %s (attempt %d/%d).",
