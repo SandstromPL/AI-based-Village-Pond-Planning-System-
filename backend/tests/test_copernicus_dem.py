@@ -3,7 +3,9 @@ Cloud-Optimized GeoTIFF tiles from public AWS S3 storage rather than
 querying a rate-limited REST API. `rasterio.open` is mocked throughout;
 these tests never touch the real network."""
 
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import Mock, patch
 
 import pytest
@@ -130,3 +132,35 @@ def test_sampling_exception_after_open_returns_none_for_that_tiles_points(mock_o
     result = fetch_from_copernicus_dem([(21.26, 81.28)], deadline=time.monotonic() + 10)
 
     assert result == [None]
+
+
+@patch("app.providers.elevation.copernicus_dem.rasterio.open")
+def test_concurrent_requests_for_the_same_tile_open_it_only_once(mock_open):
+    """Regression test for a real production bug: outer elevation batches
+    run concurrently (see open_elevation.fetch_elevations' ThreadPoolExecutor),
+    and a selected area's grid almost always fits inside a single 1x1-degree
+    tile — multiple batches were found racing to open the *same* tile
+    independently: one succeeded in ~15s while the other two each wasted a
+    further ~20s hitting their own separate DNS timeouts for a tile that
+    was already available, instead of just reusing the first result."""
+    shared_dataset = _mock_dataset([100.0])
+    open_call_count = 0
+    open_lock = threading.Lock()
+
+    def slow_open(url, *args, **kwargs):
+        nonlocal open_call_count
+        with open_lock:
+            open_call_count += 1
+        time.sleep(0.15)  # long enough that concurrent callers overlap
+        return shared_dataset
+
+    mock_open.side_effect = slow_open
+
+    def worker(_):
+        return fetch_from_copernicus_dem([(21.26, 81.28)], deadline=time.monotonic() + 10)
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = list(executor.map(worker, range(5)))
+
+    assert all(r == [100.0] for r in results)
+    assert open_call_count == 1  # only the first caller actually opened the tile

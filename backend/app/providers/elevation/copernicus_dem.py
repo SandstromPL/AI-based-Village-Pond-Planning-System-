@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -40,6 +41,20 @@ _TILE_URL_TEMPLATE = (
 # open_elevation.py's _point_cache) — avoids re-opening the same tile's
 # HTTP connection for every batch that touches the same area.
 _open_tiles: Dict[Tuple[str, int, str, int], object] = {}
+
+# One lock per tile, guarding the open attempt itself (not just the dict
+# access) — outer elevation batches run concurrently (see
+# open_elevation.fetch_elevations' ThreadPoolExecutor), and a selected
+# area's grid almost always fits inside a single 1x1-degree tile, so
+# multiple batches racing to open the *same* tile at once was a real,
+# observed bug: three concurrent batches each independently attempted
+# rasterio.open() for the same tile — one succeeded in ~15s, the other
+# two each wasted a further ~20s hitting their own independent DNS
+# timeouts for a tile that was already (or about to be) available. With
+# this lock, only the first caller actually opens the tile; the others
+# block briefly and then reuse its result instead of re-fetching.
+_tile_locks: Dict[Tuple[str, int, str, int], threading.Lock] = {}
+_tile_locks_guard = threading.Lock()
 
 
 def _tile_key(lat: float, lon: float) -> Tuple[str, int, str, int]:
@@ -102,6 +117,20 @@ def _get_or_open_tile(tile: Tuple[str, int, str, int]):
     if tile in _open_tiles:
         return _open_tiles[tile]
 
+    with _tile_locks_guard:
+        tile_lock = _tile_locks.setdefault(tile, threading.Lock())
+
+    with tile_lock:
+        # Re-check after acquiring the per-tile lock: another thread may
+        # have already opened (or be opening) this exact tile while we
+        # were waiting — if it succeeded, reuse its result instead of
+        # making a second, redundant network call for the same data.
+        if tile in _open_tiles:
+            return _open_tiles[tile]
+        return _open_tile_uncached(tile)
+
+
+def _open_tile_uncached(tile: Tuple[str, int, str, int]):
     ns, lat, ew, lon = tile
     tile_name = f"{ns}{lat:02d}_00_{ew}{lon:03d}_00"
     url = _TILE_URL_TEMPLATE.format(
@@ -146,3 +175,5 @@ def clear_tile_cache() -> None:
         except Exception:
             pass
     _open_tiles.clear()
+    with _tile_locks_guard:
+        _tile_locks.clear()

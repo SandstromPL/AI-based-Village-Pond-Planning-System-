@@ -671,6 +671,30 @@ Honest reflection, not just a features list:
   location's multi-year average would need on the order of 130 individual
   monthly file reads, a heavier lift than elevation's one-or-two-tile
   read per analysis, and worth a follow-up rather than bundling in here.
+- **A real concurrency bug in the Copernicus DEM tile cache was found from
+  a live production log**, not a hypothetical: a larger selected area
+  needing more than `ELEVATION_BATCH_SIZE` (1000) grid points splits into
+  multiple outer batches that are fetched *concurrently*
+  (`fetch_elevations`'s `ThreadPoolExecutor`). Since a selected area's
+  whole grid almost always fits inside a single 1°×1° Copernicus DEM
+  tile, every one of those concurrent batches needed the *same* tile —
+  and the tile cache had no locking, so each batch independently raced to
+  open it. The log showed exactly this: one batch's attempt succeeded
+  after 14.93 s, while two other batches, racing to open the identical
+  tile at the same time, each separately hit a DNS resolution timeout
+  after 20 s — wasted, redundant network calls for data one of them had
+  already fetched successfully. Fixed with a per-tile lock and
+  double-checked-locking pattern (`app/providers/elevation/
+  copernicus_dem.py`): the first caller for a given tile opens it; any
+  concurrent callers for the *same* tile wait briefly and then reuse its
+  result instead of independently re-fetching. A failed open is still not
+  cached (matching this project's established "never cache a failure"
+  rule), so a genuinely unavailable tile is still retried fresh by the
+  next caller rather than permanently blocked. Verified with a dedicated
+  concurrency regression test (five threads racing for the same tile
+  under a mocked slow open; asserts the underlying open call happens
+  exactly once) plus manual review of the fix against the exact log
+  sequence that surfaced the bug.
 - **Observation from testing on the actual grading/lab machine** (a
   student container, not the development sandbox): *every* external
   dependency — OpenZenith included, which had been perfectly reliable in
