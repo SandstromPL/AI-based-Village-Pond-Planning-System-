@@ -1,153 +1,157 @@
-# Village Pond Planning API — Phase 2
+# AI-based Village Pond Planning System
 
-> **AI-based Village Pond Planning System** | CSD Assignment 1 | Phase 2 Backend
+> CSD Assignment 1 — Final Submission
+> **Paritosh Lahre** (Student ID: 12341550), Indian Institute of Technology Bhilai
 
-A FastAPI backend that accepts a contour map (KML/KMZ), analyzes terrain and hydrology, and recommends suitable pond locations with catchment information.
+A full-stack decision-support system that recommends pond/check-dam
+locations from either an uploaded contour map (KML/KMZ) or a user-drawn
+area on an interactive map. It reconstructs terrain, analyzes drainage,
+scores candidate sites, filters out sites that conflict with existing
+buildings/roads/rivers, estimates expected water volume from real
+historical rainfall, and presents all of it overlaid on a map — engineered
+to keep working (with honest warnings) when any of its external data
+sources is temporarily unavailable, which in practice is often.
+
+- **Report**: [`report.pdf`](./report.pdf) / [`report.tex`](./report.tex) (ACM format, 10 pages)
+- **Backend docs**: [`backend/README.md`](./backend/README.md) — full API reference, configuration, algorithms
+- **Frontend docs**: [`frontend/README.md`](./frontend/README.md)
+- **Deployed frontend**: _TODO_
+- **Demo video**: _TODO_
+
+---
+
+## What it does
+
+Two input modes, one pipeline:
+
+```
+KML/KMZ Upload                          Map-drawn Polygon
+    ↓                                        ↓
+Contour parsing → DEM interpolation    Copernicus DEM tile read, falling
+                                        back to OpenZenith → Open-Elevation
+                                        → OpenTopoData if unavailable
+    └───────────────────┬────────────────────┘
+                         ↓
+    Priority-Flood depression filling → D8 flow direction → flow
+    accumulation → candidate generation → hard filters (slope, catchment
+    size, land-use constraint via live OpenStreetMap data) → catchment
+    delineation → multi-factor scoring
+                         ↓
+    Historical rainfall (Open-Meteo) → Rational-Method runoff estimate
+    → planning-level pond sizing (depth, surface area, storage volume)
+                         ↓
+    Structured JSON + GeoJSON layers, rendered on an interactive map
+```
+
+Results include the recommended pond's location, its catchment area,
+expected annual collectable water volume, and planned storage — plus,
+in the frontend's "View Full Details" modal, a per-candidate score
+breakdown, monthly rainfall detail, and every assumption/parameter the
+analysis used.
+
+## Why this is more resilient than it sounds
+
+Every external data source this project depends on (three elevation
+providers, one land-use provider, one rainfall provider) is free,
+community- or hobby-run infrastructure with no uptime guarantee — and
+during development, every single one of them failed for real: DNS
+resolution errors, confirmed rate-limiting, connection resets, bot
+filtering. Rather than treat that as an edge case, the whole backend is
+built around it:
+
+- **Bounded timeouts + sensible retries** — a slow/overloaded server gets
+  retried once; a broken DNS/connection does not, since a same-second
+  retry of that essentially never succeeds (confirmed from real
+  production logs — retrying anyway was doubling failure time for no
+  benefit).
+- **Multi-tier fallback** — elevation tries a static, non-rate-limited
+  data source (Copernicus DEM GLO-30, read directly from public AWS S3
+  storage) before falling through a 3-provider REST cascade
+  (OpenZenith → Open-Elevation → OpenTopoData).
+- **A shared circuit breaker** — once a provider is seen rate-limited or
+  unreachable, further requests skip it immediately for a cooldown window
+  instead of re-discovering the same failure from scratch every time.
+- **Graceful degradation everywhere** — a failed rainfall or land-use
+  fetch never fails the whole request; the response comes back with an
+  explicit `"unavailable"` status and a warning, and the rest of the
+  analysis still completes.
+
+See `report.pdf` §8 (Discussion and Limitations) and `report.md` for the
+full, evidence-based account of what actually broke and how it was fixed.
 
 ---
 
 ## Quick Start
 
+### Backend
+
 ```bash
-# 1. Create and activate virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# 2. Install dependencies
+cd backend
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-# 3. Copy the sample KML to the data directory
-cp ../input/contours_1m.kml data/
-
-# 4. Copy and configure environment
 cp .env.example .env
-# Edit .env if you want to change DEM resolution or thresholds
-
-# 5. Start the server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Open **http://localhost:8000/docs** for the interactive API docs (Swagger UI).
+API docs at `http://localhost:8000/docs`. See
+[`backend/README.md`](./backend/README.md) for the full endpoint
+reference, every configuration variable, and the algorithms used.
 
----
-
-## API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/v1/analyzeContour` | Upload KML/KMZ → full analysis |
-| `GET`  | `/api/v1/analysis/{id}` | Retrieve a previous analysis |
-| `GET`  | `/api/v1/health` | Service health check |
-
-### Example: Analyze a contour map
+### Frontend
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/analyzeContour \
-  -F "file=@data/contours_1m.kml" | python3 -m json.tool | head -80
+cd frontend
+npm install
+cp .env.example .env
+# point VITE_API_BASE_URL at your backend, e.g. http://localhost:8000/api/v1
+npm run dev       # http://localhost:5173
 ```
 
----
-
-## Analysis Pipeline
-
-```
-KML/KMZ Upload
-    ↓
-File Validation & Parsing
-    ↓
-Terrain Model (DEM via contour interpolation)
-    ↓
-Hydrological Conditioning (Priority-Flood depression fill)
-    ↓
-D8 Flow Direction (steepest downhill neighbour)
-    ↓
-Flow Accumulation (topological sort)
-    ↓
-Candidate Generation
-   ├── Depression seeds (genuine terrain bowls)
-   └── Flow convergence seeds (high accumulation points)
-    ↓
-Hard Filters (slope, catchment size)
-    ↓
-Catchment Delineation (upstream BFS per candidate)
-    ↓
-Multi-factor Scoring & Ranking
-    ↓
-[PLACEHOLDER] Rainfall / Runoff / Pond Sizing
-    ↓
-Structured JSON + GeoJSON layers
-```
-
----
-
-## Configuration
-
-All parameters are in `.env` (see `.env.example`):
-
-| Variable | Default | Description |
-|---|---|---|
-| `DEM_RESOLUTION_M` | `30` | DEM grid cell size (metres) |
-| `MAX_SLOPE_DEG` | `15` | Hard filter: reject candidates with slope > this |
-| `MIN_CATCHMENT_KM2` | `0.05` | Hard filter: reject if catchment < this |
-| `MAX_CANDIDATES` | `5` | Maximum candidates to return |
-| `FLOW_ACC_PERCENTILE` | `99` | Top percentile for flow-convergence seeds |
-| `MIN_CANDIDATE_DISTANCE_M` | `200` | Minimum separation between candidates |
-
----
-
-## External API Placeholders
-
-The following APIs are marked `# [EXTERNAL_API_PLACEHOLDER]` and return stub data in Phase 2:
-
-| Provider | Purpose | Phase 3 action |
-|---|---|---|
-| OpenZenith | Elevation validation | Add key to `OPENZENITH_API_KEY` |
-| Open-Meteo | Historical rainfall | No key needed — implement provider |
-| NASA POWER | Rainfall alternative | Implement provider |
-| IMD | Indian rainfall data | Add key to `IMD_API_KEY` |
-
-Implement the provider in `app/providers/rainfall/` following the base class in `app/providers/rainfall/base.py`.
-
----
-
-## Running Tests
+### Tests
 
 ```bash
-# Ensure the sample KML is in data/ first
-pytest tests/ -v
+cd backend
+pytest tests/ -v   # 70 tests
 ```
 
 ---
 
-## Project Structure
+## Repository structure
 
 ```
 backend/
-├── app/
-│   ├── main.py             # FastAPI app factory
-│   ├── config.py           # All settings (Pydantic BaseSettings)
-│   ├── api/                # HTTP route handlers
-│   ├── services/           # Business logic orchestration
-│   ├── algorithms/         # Pure computational algorithms
-│   ├── providers/          # External API integrations (placeholders)
-│   ├── models/             # Data classes and Pydantic schemas
-│   └── utils/              # Geo helpers, GeoJSON, storage
-├── tests/                  # Pytest test suite
-├── data/                   # Place contours_1m.kml here
-├── requirements.txt
-└── .env.example
+  app/
+    api/          — HTTP route handlers
+    services/      — pipeline orchestration (one service per concern)
+    algorithms/    — pure computation (depression fill, D8 flow, flow
+                     accumulation, watershed, scoring, slope, interpolation)
+    providers/      — external API integrations (elevation, land-use)
+    models/        — dataclasses + Pydantic schemas
+    utils/         — geo helpers, GeoJSON, in-memory storage, circuit
+                     breaker, shared HTTP client identity
+  tests/           — 70 pytest tests
+frontend/
+  src/
+    components/    — map view, results panel + detail modal, upload/draw
+                     controls, loading/error UI
+    utils/         — display formatting, GeoJSON filtering, volume estimate
+    api.js, theme.js, App.jsx
+report.tex / report.pdf   — final technical report
+report.md                 — working notes (session-by-session build log)
+video_script.md            — demo video script
 ```
 
----
+## Tech stack
 
-## Algorithms Used
+**Backend**: Python, FastAPI, Pydantic, GeoPandas, Shapely, pyproj,
+rasterio, NumPy, SciPy, httpx. **Frontend**: React 19, Vite, Leaflet +
+react-leaflet + leaflet-draw, plain CSS (no state library, no
+TypeScript, no UI framework). **External data**: Copernicus DEM (AWS S3
+Open Data), OpenZenith, Open-Elevation, OpenTopoData, Overpass API
+(OpenStreetMap), Open-Meteo — all free, no API key required.
 
-| Algorithm | File | Reference |
-|---|---|---|
-| Contour → DEM | `algorithms/interpolation.py` | scipy griddata (linear + nearest) |
-| Depression Filling | `algorithms/depression.py` | Barnes et al. (2014) Priority-Flood |
-| Flow Direction | `algorithms/flow_direction.py` | D8 steepest-descent |
-| Flow Accumulation | `algorithms/flow_accumulation.py` | Kahn's topological sort |
-| Catchment Delineation | `algorithms/watershed.py` | Upstream BFS on reverse flow graph |
-| Slope | `algorithms/slope.py` | NumPy finite difference gradient |
-| Scoring | `algorithms/scoring.py` | Min-max normalised weighted sum |
+## AI tool usage
+
+Claude (Anthropic's Claude Code CLI) assisted with implementation,
+debugging, and report drafting; all changes were reviewed and tested by
+the author.

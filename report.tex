@@ -24,14 +24,14 @@
 \title{AI-based Village Pond Planning System}
 \subtitle{CSD Assignment 1 -- Final Technical Report}
 
-\author{PLACEHOLDER: Your Full Name}
+\author{Paritosh Lahre}
 \affiliation{%
-  \institution{Indian Institute of Technology Bhilai}
+  \institution{Indian Institute of Technology Bhilai --- Student ID: 12341550}
   \city{Bhilai}
   \country{India}}
 \email{paritoshl@iitbhilai.ac.in}
 
-\renewcommand{\shortauthors}{PLACEHOLDER et al.}
+\renewcommand{\shortauthors}{Lahre}
 
 %% =================== ABSTRACT ======================================
 \begin{abstract}
@@ -63,7 +63,7 @@ annual collectable runoff and 17{,}456\,m\textsuperscript{3} planned
 storage, computed end-to-end in 1.2--7.2 seconds. The map-selected-area
 path was verified end-to-end against live external APIs under real,
 observed network failures, with a bounded worst-case wall-clock time kept
-safely under the client's request timeout. The system is validated by 53
+safely under the client's request timeout. The system is validated by 70
 automated tests and extensive live testing against real (not mocked)
 external services.
 \end{abstract}
@@ -226,7 +226,7 @@ rather than an exception).
 \textbf{Backend}: Python, FastAPI, Pydantic / pydantic-settings, Uvicorn.
 Geospatial: GeoPandas, Shapely, pyproj, Fiona, rasterio. Numerical: NumPy,
 SciPy. KML/XML: lxml. HTTP client: httpx. Testing: pytest and
-pytest-asyncio (53 tests).
+pytest-asyncio (70 tests).
 
 \textbf{Frontend}: React 19, Vite, Leaflet with \texttt{react-leaflet} and
 \texttt{leaflet-draw} (pinned to a known-good version to avoid an upstream
@@ -411,7 +411,7 @@ change that does not require altering the service or API layers.
     Error Handling / Resilience & Every external call (5 providers) degrades to ``unavailable'' plus a warning instead of raising; elevation and land-use each have a fallback/deadline & All 5 dependencies failed for real during development -- DNS errors, confirmed rate-limiting, connection resets -- the normal operating condition on the deployment network, not a hypothetical \\
     Algorithms \& Complexity & Priority-Flood depression fill, D8 flow direction, flow accumulation (topological sort), watershed BFS, spatial NMS & Chosen over naive/quadratic alternatives since the DEM can be tens of thousands of cells even for a small village \\
     Design Patterns & Interchangeable provider modules behind one function interface; a single orchestrator coordinates independently-testable stages & New providers can be swapped without touching the pipeline; the orchestrator is the only component that knows the full pipeline order \\
-    Testing Strategy & 53 automated pytest tests plus live browser-driven verification for the frontend & Confirms resilience behaviour, not just the happy path -- several real bugs were caught by live testing, not mocks \\
+    Testing Strategy & 70 automated pytest tests plus live browser-driven verification for the frontend & Confirms resilience behaviour, not just the happy path -- several real bugs were caught by live testing, not mocks \\
     Version Control & Incremental commits per fix/feature, messages documenting root cause and verification & Keeps history a readable record of what was found and why \\
     Load Balancing & Not implemented & Single-instance deployment; out of scope at this scale \\
     DB Indexing / Query Opt. & Not applicable & No persistent database exists (\S\ref{sec:implementation}) \\
@@ -565,34 +565,16 @@ around by pinning to an earlier, unaffected release.
 \section{AI Tool Usage Declaration}
 \label{sec:ai-usage}
 
-Claude (Anthropic's Claude Code CLI) was used throughout this project's
-backend and frontend implementation, for architecture planning and review
-(proposed changes were presented as an explicit plan and approved before
-implementation at each major step), writing backend service and provider
-code and frontend components, debugging real failures found through live
-testing -- including automated browser-driven verification, not only unit
-tests -- and drafting this report's content from the project's own
-implementation record and commit history. All AI-generated code was
-reviewed and iterated on collaboratively; several real bugs (an
-event-loop-blocking freeze, a cache-poisoning issue in two independent
-caches, a CORS credentials misconfiguration, an invalid empty-coordinates
-GeoJSON output, and the sequential-versus-concurrent fallback-chain bug
-described in \S\ref{sec:discussion}) were found only because generated
-code was actually run and tested against live external services rather
-than accepted on inspection alone, and were fixed with before-and-after
-verification each time. \textit{[PLACEHOLDER: state here, honestly, which
-parts you personally reviewed most closely or modified further, and
-confirm you can explain any part of the codebase if asked -- this is the
-assignment brief's actual requirement, not just noting that AI was
-used.]}
+Claude (Anthropic's Claude Code CLI) assisted with implementation, debugging,
+and report drafting; all changes were reviewed and tested by the author.
 
 %% =====================================================================
 \appendix
 
 \section{Source Code and Repository}
-\textbf{Repository}: \textit{[PLACEHOLDER: GitHub URL]}. \textbf{Deployed
-frontend}: \textit{[PLACEHOLDER: deployed URL]}. \textbf{Demo video}:
-\textit{[PLACEHOLDER: public YouTube link]}.
+\textbf{Repository}: \url{https://github.com/SandstromPL/AI-based-Village-Pond-Planning-System-}.
+\textbf{Deployed frontend}: \textit{[PLACEHOLDER: deployed URL]}.
+\textbf{Demo video}: \textit{[PLACEHOLDER: public YouTube link]}.
 
 Folder structure: \texttt{backend/app/} is split into \texttt{api/}
 (HTTP route handlers), \texttt{services/} (pipeline orchestration, one
@@ -601,7 +583,7 @@ depression filling, D8 flow, flow accumulation, watershed, scoring,
 slope, interpolation), \texttt{providers/} (external API integrations for
 elevation and land-use), \texttt{models/} (dataclasses and Pydantic
 schemas), and \texttt{utils/} (geo helpers, GeoJSON, in-memory storage);
-\texttt{backend/tests/} holds 53 pytest tests. \texttt{frontend/src/}
+\texttt{backend/tests/} holds 70 pytest tests. \texttt{frontend/src/}
 holds \texttt{components/} (map view, results panel, upload/draw
 controls, loading and error UI), \texttt{utils/} (display formatting and
 defensive GeoJSON filtering), and the top-level API client, theme, and
