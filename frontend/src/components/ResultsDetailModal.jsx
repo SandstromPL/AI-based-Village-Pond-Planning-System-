@@ -145,6 +145,7 @@ export default function ResultsDetailModal({ result, onClose }) {
                       <th>Elevation (m)</th>
                       <th>Slope (°)</th>
                       <th>Catchment (km²)</th>
+                      <th>Catchment (m²)</th>
                       <th>Expected Volume (m³)</th>
                       <th>Reason</th>
                     </tr>
@@ -159,6 +160,12 @@ export default function ResultsDetailModal({ result, onClose }) {
                         <td>{safeNumber(c.elevation_m, 1)}</td>
                         <td>{safeNumber(c.slope_deg, 1)}</td>
                         <td>{safeNumber(c.catchment_area_km2, 4)}</td>
+                        <td>
+                          {safeNumber(
+                            c.catchment_area_km2 != null ? c.catchment_area_km2 * 1_000_000 : null,
+                            0,
+                          )}
+                        </td>
                         <td>
                           {safeNumber(
                             estimateVolumeM3(
