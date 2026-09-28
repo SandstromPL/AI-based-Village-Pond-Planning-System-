@@ -30,12 +30,14 @@
 > "It's a three-tier system. A React and Leaflet frontend talks to a
 > FastAPI backend over a REST API. The backend is layered — API routes,
 > orchestration services, pure algorithms, and external-provider
-> integrations — each layer independently testable. Five external APIs
-> feed it: Open-Meteo for historical rainfall, a three-tier elevation
-> cascade — OpenZenith, Open-Elevation, OpenTopoData — for terrain when
-> there's no contour file, and the Overpass API for real OpenStreetMap
-> data on buildings, roads, and rivers. There's no database — results are
-> computed fresh from live data on every request."
+> integrations — each layer independently testable. Six external data
+> sources feed it: for terrain, when there's no contour file, elevation is
+> read directly from Copernicus DEM — real satellite elevation data hosted
+> as public cloud storage — falling back through three more elevation
+> APIs if that's ever unavailable; Open-Meteo supplies historical
+> rainfall; and the Overpass API pulls real OpenStreetMap data on
+> buildings, roads, and rivers. There's no database — results are computed
+> fresh from live data on every request."
 
 ---
 
@@ -51,8 +53,11 @@ zoom into the map layers as you name each stage.
 
 > First, terrain. From an uploaded contour map, contour lines are parsed
 > and interpolated onto a grid — a Digital Elevation Model. From a
-> drawn area, that same grid is built by fetching real elevation data
-> point-by-point from a live API instead.
+> drawn area, that same grid is built by reading real elevation values
+> directly from Copernicus DEM, a satellite-derived global elevation
+> dataset — no rate limits, since it's read as a plain cloud-hosted file
+> rather than queried through an API — with three more elevation
+> providers as fallback if that's ever unreachable.
 
 > Second, hydrological conditioning. Raw elevation data has small
 > artificial pits that would trap water unrealistically — Priority-Flood
@@ -108,7 +113,7 @@ the fast, reliable path):
 **Option B — draw-on-map path** (use this one if you want to also show
 the assignment's specific "select an area on the map" requirement):
 - Switch to "Draw Area on Map", draw a rectangle over a real area.
-- Click Analyze. **[This calls five live external APIs over the real
+- Click Analyze. **[This calls up to six live external data sources over the real
   network — it can take anywhere from a few seconds to over a minute
   depending on how those services are behaving right now. Narrate over
   the wait: don't just stare at a loading spinner on camera.]**
@@ -138,12 +143,14 @@ seconds in the script.)*
 
 **[SCREEN: can stay on the results, or cut to a terminal/log view if you have one]**
 
-> "Because this depends on five free external APIs, and none of them
-> guarantee uptime, every one of them is wrapped so a failure degrades to
-> an explicit 'unavailable' status instead of crashing the request. During
-> development, every single one of them failed for real at least once —
-> DNS failures, rate limits, connection resets — and the system kept
-> working through all of it."
+> "Because this depends on six free external data sources, and none of
+> them guarantee uptime, every one of them is wrapped so a failure
+> degrades to an explicit 'unavailable' status instead of crashing the
+> request. During development, every single one of them failed for real
+> at least once — DNS failures, confirmed rate limits, connection resets —
+> and the system kept working through all of it, including a circuit
+> breaker that stops retrying a provider that's currently down instead of
+> repeating the same failure on every request."
 
 ---
 
