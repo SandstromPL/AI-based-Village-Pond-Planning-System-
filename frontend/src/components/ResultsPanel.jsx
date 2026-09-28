@@ -1,6 +1,10 @@
+import { useState } from 'react'
 import { prettify, safe, safeNumber } from '../utils/format.js'
+import ResultsDetailModal from './ResultsDetailModal.jsx'
 
 export default function ResultsPanel({ result }) {
+  const [isModalOpen, setIsModalOpen] = useState(false)
+
   if (!result) {
     return (
       <div className="panel-card results-panel">
@@ -26,6 +30,14 @@ export default function ResultsPanel({ result }) {
         <strong>Status: {prettify(result.status)}</strong>
         <span>{safeNumber(result.processing_time_s, 2)}s processing time</span>
       </div>
+
+      <button type="button" className="primary-button" onClick={() => setIsModalOpen(true)}>
+        View Full Details
+      </button>
+
+      {isModalOpen && (
+        <ResultsDetailModal result={result} onClose={() => setIsModalOpen(false)} />
+      )}
 
       {warnings.length > 0 && (
         <div className="panel-card warnings-card">

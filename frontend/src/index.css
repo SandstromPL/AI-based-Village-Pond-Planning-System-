@@ -464,3 +464,75 @@ details.panel-card[open] > summary {
   cursor: pointer;
   line-height: 1;
 }
+
+/* ── Results detail modal ────────────────────────────────────────────── */
+
+.results-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 17, 21, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 24px;
+}
+
+.results-modal {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 900px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.results-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.results-modal__header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.results-modal__close {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.results-modal__body {
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.results-modal__body h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+
+.results-modal__body h4 {
+  margin: 12px 0 4px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.results-modal__table-scroll {
+  overflow-x: auto;
+}
