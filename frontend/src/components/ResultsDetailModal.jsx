@@ -119,10 +119,18 @@ export default function ResultsDetailModal({ result, onClose }) {
 
           <section className="panel-card">
             <h3>All Candidates — Expanded</h3>
-            <p className="panel-card__hint">
-              Expected Volume is estimated per candidate from its own catchment area using the
-              area-wide rainfall average above — not a location-specific rainfall figure.
-            </p>
+            {rainfall.annual_avg_mm == null || runoff.runoff_coefficient == null ? (
+              <p className="panel-card__hint">
+                Expected Volume can't be estimated for this analysis — historical rainfall data
+                was unavailable ({safe(rainfall.message)}), so there's no rainfall figure to
+                convert catchment area into a water volume with.
+              </p>
+            ) : (
+              <p className="panel-card__hint">
+                Expected Volume is estimated per candidate from its own catchment area using the
+                area-wide rainfall average above — not a location-specific rainfall figure.
+              </p>
+            )}
             {candidates.length === 0 ? (
               <p className="panel-card__hint">No candidates were generated.</p>
             ) : (
