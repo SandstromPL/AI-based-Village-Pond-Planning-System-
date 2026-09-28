@@ -489,6 +489,28 @@ the whole service down for everyone else in the meantime."
 | Recommended depth / surface area | 3.0 m / 5,818.7 m² |
 | End-to-end processing time | 1.17 s – 7.22 s across repeated real runs |
 
+### Representative example (KML upload path, land-use filter active — analysis `62376cca-263f-4d81-9fe1-e42cb4b96185`)
+
+The exact same flagship dataset (`contours_1m.kml`) analyzed again on a
+run where Overpass succeeded: same 1,355 contour lines, same 106×130 DEM
+grid, same terrain — but this time **10 of 15 candidates were rejected
+with `rejected_land_use_constraint`** against real OpenStreetMap data,
+leaving the same top-5 candidates as the primary example above (C4/C6/C9/
+C11/C14, identical scores — confirming the terrain/scoring pipeline is
+fully deterministic; only the external API outcome varies run to run).
+Processing time: 0.94s.
+
+This run is also a clean, real illustration of this project's central
+resilience claim, not a hypothetical: **Overpass succeeded while
+Open-Meteo failed in the same request** ("Rainfall data is temporarily
+unavailable: unable to reach Open-Meteo"). The response still came back
+`"status": "success"` with a complete, correctly land-use-filtered
+candidate list — only the rainfall-dependent fields (expected annual
+collection, planned storage) were `null`, with an explicit warning
+explaining why. Each external dependency degrades independently; a
+failure in one never blocks a result that other, healthy dependencies can
+still produce.
+
 ### Representative example (map-drawn-area path, land-use filter active)
 
 A ~0.6 km² user-drawn polygon over the same region: **675 elevation

@@ -468,6 +468,20 @@ dependencies turned out to be in practice.
   \end{tabular}
 \end{table}
 
+The identical dataset, analyzed again on a run where Overpass succeeded
+(analysis \texttt{62376cca}), rejected 10 of 15 candidates with a
+land-use-constraint status against real OpenStreetMap data, leaving the
+same top-5 candidates and identical scores as Table~\ref{tab:results-kml}
+-- confirming the terrain/scoring pipeline is fully deterministic; only
+the external API outcome varies run to run. That same run is also a
+clean, real illustration of this project's central resilience claim:
+Overpass succeeded while Open-Meteo failed in the same request, and the
+response still came back a complete, correctly-filtered candidate list
+with \texttt{status: "success"} -- only the rainfall-dependent fields
+were null, with an explicit warning explaining why. Each external
+dependency degrades independently; a failure in one never blocks a
+result the others can still produce.
+
 A second representative run on a $\sim$0.6\,km\textsuperscript{2}
 user-drawn polygon over the same region fetched 675 elevation samples
 (200 requiring nearest-neighbour fill after provider retries), generated
