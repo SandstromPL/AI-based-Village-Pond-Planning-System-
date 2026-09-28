@@ -73,6 +73,9 @@ def fetch_from_copernicus_dem(
     for i, (lat, lon) in enumerate(points):
         by_tile.setdefault(_tile_key(lat, lon), []).append(i)
 
+    logger.info(
+        "Copernicus DEM: resolving %d point(s) across %d tile(s)...", len(points), len(by_tile)
+    )
     results: List[Optional[float]] = [None] * len(points)
     for tile, indices in by_tile.items():
         if time.monotonic() > deadline:
@@ -90,6 +93,8 @@ def fetch_from_copernicus_dem(
         except Exception as exc:
             logger.warning("Copernicus DEM sampling failed for tile %s: %s", tile, exc)
 
+    resolved = sum(1 for v in results if v is not None)
+    logger.info("Copernicus DEM resolved %d/%d point(s).", resolved, len(points))
     return results
 
 
@@ -98,9 +103,18 @@ def _get_or_open_tile(tile: Tuple[str, int, str, int]):
         return _open_tiles[tile]
 
     ns, lat, ew, lon = tile
+    tile_name = f"{ns}{lat:02d}_00_{ew}{lon:03d}_00"
     url = _TILE_URL_TEMPLATE.format(
         bucket=settings.copernicus_dem_bucket_url, ns=ns, lat=lat, ew=ew, lon=lon
     )
+    # Logged *before* the attempt, not just on success/failure: unlike the
+    # REST providers (which log a warning per retry while they wait),
+    # rasterio.open() over /vsicurl/ blocks silently for however long the
+    # connection takes (observed for real: anywhere from ~0.04s to ~11s on
+    # this project's own test network) — without this line, that stretch
+    # looks indistinguishable from the backend simply doing nothing.
+    logger.info("Fetching Copernicus DEM tile %s...", tile_name)
+    start = time.monotonic()
     try:
         # GDAL's /vsicurl/ virtual filesystem takes its timeout from GDAL
         # config options, not a rasterio.open() kwarg — there is no
@@ -110,10 +124,16 @@ def _get_or_open_tile(tile: Tuple[str, int, str, int]):
             GDAL_HTTP_CONNECTTIMEOUT=int(settings.copernicus_dem_request_timeout_s),
         ):
             dataset = rasterio.open(url)
+        logger.info(
+            "Copernicus DEM tile %s opened in %.2fs.", tile_name, time.monotonic() - start
+        )
         _open_tiles[tile] = dataset
         return dataset
     except Exception as exc:
-        logger.warning("Could not open Copernicus DEM tile %s%02d_00_%s%03d_00: %s", ns, lat, ew, lon, exc)
+        logger.warning(
+            "Could not open Copernicus DEM tile %s after %.2fs: %s",
+            tile_name, time.monotonic() - start, exc,
+        )
         circuit_breaker.trip("copernicus-dem", settings.circuit_breaker_cooldown_s)
         return None
 
