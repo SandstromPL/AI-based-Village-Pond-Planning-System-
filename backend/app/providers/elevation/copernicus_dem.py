@@ -42,17 +42,22 @@ _TILE_URL_TEMPLATE = (
 # HTTP connection for every batch that touches the same area.
 _open_tiles: Dict[Tuple[str, int, str, int], object] = {}
 
-# One lock per tile, guarding the open attempt itself (not just the dict
-# access) — outer elevation batches run concurrently (see
+# One lock per tile, guarding *every* use of that tile's dataset — not
+# just the open. Outer elevation batches run concurrently (see
 # open_elevation.fetch_elevations' ThreadPoolExecutor), and a selected
-# area's grid almost always fits inside a single 1x1-degree tile, so
-# multiple batches racing to open the *same* tile at once was a real,
-# observed bug: three concurrent batches each independently attempted
-# rasterio.open() for the same tile — one succeeded in ~15s, the other
-# two each wasted a further ~20s hitting their own independent DNS
-# timeouts for a tile that was already (or about to be) available. With
-# this lock, only the first caller actually opens the tile; the others
-# block briefly and then reuse its result instead of re-fetching.
+# area's grid almost always fits inside a single 1x1-degree tile, so this
+# lock originally only wrapped rasterio.open() (fixing a real observed bug:
+# concurrent batches independently opening the same tile, wasting ~20s
+# each on redundant DNS timeouts). That left a second, worse bug: once
+# opened, those same concurrent batches called dataset.sample() on the one
+# shared dataset at the same time. GDAL's underlying libtiff reader is not
+# thread-safe for concurrent decodes on a single handle — observed for
+# real in production, two threads sampling the same COG at once corrupted
+# the ZIP-compressed read ("invalid distance too far back") and then hit a
+# libtiff C assertion that calls abort(), killing the entire backend
+# process, not just the request. The lock now stays held across open AND
+# sample for a given tile, so all access to one tile's dataset is fully
+# serialized; only different tiles can be read concurrently.
 _tile_locks: Dict[Tuple[str, int, str, int], threading.Lock] = {}
 _tile_locks_guard = threading.Lock()
 
@@ -97,37 +102,28 @@ def fetch_from_copernicus_dem(
             logger.warning("Copernicus DEM deadline exceeded; %d point(s) left unfetched.", len(indices))
             break
 
-        dataset = _get_or_open_tile(tile)
-        if dataset is None:
-            continue  # this tile failed to open; those points stay None
+        with _get_tile_lock(tile):
+            dataset = _open_tiles.get(tile)
+            if dataset is None:
+                dataset = _open_tile_uncached(tile)
+            if dataset is None:
+                continue  # this tile failed to open; those points stay None
 
-        try:
-            coords = [(points[i][1], points[i][0]) for i in indices]  # rasterio wants (lon, lat)
-            for i, sample in zip(indices, dataset.sample(coords)):
-                results[i] = float(sample[0])
-        except Exception as exc:
-            logger.warning("Copernicus DEM sampling failed for tile %s: %s", tile, exc)
+            try:
+                coords = [(points[i][1], points[i][0]) for i in indices]  # rasterio wants (lon, lat)
+                for i, sample in zip(indices, dataset.sample(coords)):
+                    results[i] = float(sample[0])
+            except Exception as exc:
+                logger.warning("Copernicus DEM sampling failed for tile %s: %s", tile, exc)
 
     resolved = sum(1 for v in results if v is not None)
     logger.info("Copernicus DEM resolved %d/%d point(s).", resolved, len(points))
     return results
 
 
-def _get_or_open_tile(tile: Tuple[str, int, str, int]):
-    if tile in _open_tiles:
-        return _open_tiles[tile]
-
+def _get_tile_lock(tile: Tuple[str, int, str, int]) -> threading.Lock:
     with _tile_locks_guard:
-        tile_lock = _tile_locks.setdefault(tile, threading.Lock())
-
-    with tile_lock:
-        # Re-check after acquiring the per-tile lock: another thread may
-        # have already opened (or be opening) this exact tile while we
-        # were waiting — if it succeeded, reuse its result instead of
-        # making a second, redundant network call for the same data.
-        if tile in _open_tiles:
-            return _open_tiles[tile]
-        return _open_tile_uncached(tile)
+        return _tile_locks.setdefault(tile, threading.Lock())
 
 
 def _open_tile_uncached(tile: Tuple[str, int, str, int]):

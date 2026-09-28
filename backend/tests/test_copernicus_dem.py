@@ -164,3 +164,41 @@ def test_concurrent_requests_for_the_same_tile_open_it_only_once(mock_open):
 
     assert all(r == [100.0] for r in results)
     assert open_call_count == 1  # only the first caller actually opened the tile
+
+
+@patch("app.providers.elevation.copernicus_dem.rasterio.open")
+def test_concurrent_batches_never_sample_the_same_dataset_at_once(mock_open):
+    """Regression test for a real production crash: once a tile was open,
+    concurrent elevation batches (same ThreadPoolExecutor as the test
+    above) called dataset.sample() on the *same shared dataset* at the
+    same time. GDAL's underlying libtiff reader is not thread-safe for
+    concurrent decodes on one handle — two threads sampling at once
+    corrupted the compressed read and crashed the whole process with a
+    libtiff C assertion (abort()), not just a Python exception. The fix
+    holds the tile's lock across sampling too, not just opening — this
+    test proves no two threads ever run inside dataset.sample()
+    concurrently, using an instrumented sample() that fails the test if
+    it's re-entered while already running."""
+    dataset = Mock()
+    currently_sampling = threading.Event()
+    reentered = threading.Event()
+
+    def guarded_sample(coords):
+        if currently_sampling.is_set():
+            reentered.set()
+        currently_sampling.set()
+        time.sleep(0.05)  # long enough that concurrent callers would overlap
+        currently_sampling.clear()
+        return iter([[100.0] for _ in coords])
+
+    dataset.sample.side_effect = guarded_sample
+    mock_open.return_value = dataset
+
+    def worker(_):
+        return fetch_from_copernicus_dem([(21.26, 81.28)], deadline=time.monotonic() + 10)
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = list(executor.map(worker, range(5)))
+
+    assert all(r == [100.0] for r in results)
+    assert reentered.is_set() is False
